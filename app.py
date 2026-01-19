@@ -246,12 +246,182 @@ st.divider()
 # -----------------------------------------------------------------------------
 # TABS
 # -----------------------------------------------------------------------------
-tab1, tab2, tab3, tab4 = st.tabs([
+tab0, tab1, tab2, tab3, tab4 = st.tabs([
+    "📖 How It Works",
     "📊 Capital Stack",
     "💰 Cashflows",
     "📈 Scenarios",
     "🎯 Borrower View",
 ])
+
+# TAB 0: Business Model Explainer
+with tab0:
+    st.subheader("The Business Model")
+
+    st.markdown("""
+    ### The Problem We Solve
+
+    **Skilled Nursing Facility (SNF) owners** need financing to buy or refinance properties.
+    The best long-term option is a **HUD loan** (government-backed, low rates), but these take
+    **6-12+ months to close**. Owners can't wait that long.
+
+    **We provide bridge financing** — short-term loans that "bridge" the gap until HUD closes.
+    """)
+
+    st.divider()
+
+    st.markdown("### How We Make Money")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("#### 1. Interest Spread")
+        st.markdown(f"""
+        The borrower pays us **{borrower_rate:.2%}** interest.
+
+        We fund the loan using cheaper capital:
+        - A-Piece (bank): **{current_sofr + a_spread:.2%}**
+        - B-Piece (investors): **{current_sofr + b_spread:.2%}**
+        - C-Piece (us): **{c_target:.2%}**
+
+        **Blended cost: {deal.get_blended_cost_of_capital(current_sofr):.2%}**
+
+        The difference (**{spread_capture:.2%}**) is profit.
+        """)
+
+        annual_spread = loan_amount * spread_capture
+        st.metric("Annual Spread Income", f"${annual_spread:,.0f}")
+
+    with col2:
+        st.markdown("#### 2. Fee Income")
+
+        orig_income = deal.fees.calculate_origination(loan_amount)
+        exit_income = deal.fees.calculate_exit(loan_amount)
+        ext_income = deal.fees.calculate_extension(loan_amount)
+
+        st.markdown(f"""
+        | Fee | Rate | Amount |
+        |-----|------|--------|
+        | **Origination** (upfront) | {origination_fee:.2%} | ${orig_income:,.0f} |
+        | **Exit** (at HUD payoff) | {exit_fee:.2%} | ${exit_income:,.0f} |
+        | **Extension** (if delayed) | {extension_fee:.2%} | ${ext_income:,.0f} |
+        """)
+
+        st.metric("Total Fee Income", f"${orig_income + exit_income:,.0f}")
+
+    st.divider()
+
+    st.markdown("### The Capital Stack (A/B/C Tranches)")
+
+    st.markdown("""
+    We don't fund the whole loan ourselves. We split it into **risk layers**:
+    """)
+
+    # Visual capital stack
+    c_amt = deal.get_tranche_amount(deal.tranches[2])
+    b_amt = deal.get_tranche_amount(deal.tranches[1])
+    a_amt = deal.get_tranche_amount(deal.tranches[0])
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Bar(
+        x=["Capital Stack"],
+        y=[c_amt],
+        name=f"C-Piece (Sponsor) - ${c_amt/1e6:.0f}M",
+        marker_color="#ef553b",
+        text=[f"C: {c_pct:.0%}<br>${c_amt/1e6:.0f}M<br>Highest Risk<br>Paid Last"],
+        textposition="inside",
+    ))
+    fig.add_trace(go.Bar(
+        x=["Capital Stack"],
+        y=[b_amt],
+        name=f"B-Piece (Investors) - ${b_amt/1e6:.0f}M",
+        marker_color="#ffa15a",
+        text=[f"B: {b_pct:.0%}<br>${b_amt/1e6:.0f}M<br>Medium Risk"],
+        textposition="inside",
+    ))
+    fig.add_trace(go.Bar(
+        x=["Capital Stack"],
+        y=[a_amt],
+        name=f"A-Piece (Bank) - ${a_amt/1e6:.0f}M",
+        marker_color="#00cc96",
+        text=[f"A: {a_pct:.0%}<br>${a_amt/1e6:.0f}M<br>Lowest Risk<br>Paid First"],
+        textposition="inside",
+    ))
+
+    fig.update_layout(
+        barmode="stack",
+        height=400,
+        showlegend=True,
+        yaxis_title="Amount ($)",
+        yaxis_tickformat="$,.0f",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown("""
+        **A-Piece (Senior)**
+        - Funded by banks/credit lines
+        - Lowest rate (SOFR + 2%)
+        - Paid **first** — lowest risk
+        - If deal goes bad, they recover first
+        """)
+
+    with col2:
+        st.markdown("""
+        **B-Piece (Mezzanine)**
+        - Funded by yield investors
+        - Higher rate (SOFR + 6%)
+        - Paid after A-Piece
+        - Takes losses after A is made whole
+        """)
+
+    with col3:
+        st.markdown("""
+        **C-Piece (Equity/Sponsor)**
+        - Funded by **us**
+        - Highest return target (12%+)
+        - Paid **last** — highest risk
+        - BUT: we also get **all the fees**
+        """)
+
+    st.divider()
+
+    st.markdown("### Why Sponsor Returns Are So High")
+
+    st.markdown(f"""
+    With this deal structure:
+
+    | Your Investment | ${c_amt:,.0f} |
+    |-----------------|---------------|
+    | Origination Fee (Day 1) | +${orig_income:,.0f} |
+    | Monthly Spread + Interest | +${(annual_spread + c_amt * c_target) / 12:,.0f}/mo |
+    | Exit Fee (at HUD) | +${exit_income:,.0f} |
+
+    **Key insight:** Fees are calculated on the **full loan** (${loan_amount:,.0f}),
+    but you only invest the **C-Piece** (${c_amt:,.0f}).
+
+    That's why sponsor IRR is **{base_results['sponsor'].irr:.1%}** — you get fees on ~{loan_amount/c_amt:.0f}x your capital.
+    """)
+
+    st.divider()
+
+    st.markdown("### Why Borrowers Choose Us")
+
+    st.info(f"""
+    **Our headline rate: {borrower_rate:.2%}**
+
+    Traditional bridge lenders charge SOFR + 5-6%. We charge SOFR + {borrower_spread:.2%}.
+
+    We can offer lower rates because:
+    1. We make money on **fees**, not just spread
+    2. Our capital stack is **efficient** (cheap A-piece from banks)
+    3. We're optimizing for **volume**, not margin
+
+    Lower monthly payments = more borrowers = more deals = more fee income.
+    """)
 
 # TAB 1: Capital Stack
 with tab1:
