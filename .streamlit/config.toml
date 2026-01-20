@@ -1,9 +1,18 @@
 [theme]
-primaryColor = "#636efa"
-backgroundColor = "#0e1117"
-secondaryBackgroundColor = "#262730"
+# Ascendra Theme Colors
+primaryColor = "#4cc9f0"
+backgroundColor = "#0a1929"
+secondaryBackgroundColor = "#1a2332"
 textColor = "#fafafa"
 font = "sans serif"
 
 [server]
 headless = true
+runOnSave = true
+
+[browser]
+gatherUsageStats = false
+
+[client]
+showErrorDetails = false
+toolbarMode = "minimal"

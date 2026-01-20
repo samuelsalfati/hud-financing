@@ -26,11 +26,16 @@ def generate_cashflows(
     sofr_curve: list[float],  # Monthly SOFR values
     exit_month: int,  # When HUD takeout happens
     has_extension: bool = False,
+    sponsor_is_principal: bool = True,  # True = keeps C-piece, False = aggregator mode
 ) -> dict[str, CashflowResult]:
     """
     Generate cashflows for all tranches and sponsor economics.
 
     Returns dict with keys: 'A', 'B', 'C', 'sponsor', 'borrower'
+
+    sponsor_is_principal:
+        True = Principal mode - sponsor invests C-piece, earns C returns + fees + spread
+        False = Aggregator mode - sponsor earns fees + spread only, no capital at risk
     """
     results = {}
 
@@ -48,8 +53,8 @@ def generate_cashflows(
         tranche_result = _calc_tranche_flows(deal, tranche, sofr_curve, exit_month, has_extension)
         results[tranche.tranche_type.value] = tranche_result
 
-    # Calculate sponsor economics (fees + C-piece)
-    sponsor_result = _calc_sponsor_flows(deal, sofr_curve, exit_month, has_extension)
+    # Calculate sponsor economics (fees + C-piece if principal)
+    sponsor_result = _calc_sponsor_flows(deal, sofr_curve, exit_month, has_extension, sponsor_is_principal)
     results['sponsor'] = sponsor_result
 
     return results
@@ -172,13 +177,12 @@ def _calc_sponsor_flows(
     sofr_curve: list[float],
     exit_month: int,
     has_extension: bool,
+    is_principal: bool = True,
 ) -> CashflowResult:
     """
     Calculate sponsor economics:
-    - C-piece returns
-    - Origination fee income
-    - Exit fee income
-    - Spread income (excess interest after paying A & B)
+    - If Principal: C-piece returns + fees + spread
+    - If Aggregator: fees + spread only (no capital invested)
     """
     months = list(range(exit_month + 1))
 
@@ -189,7 +193,8 @@ def _calc_sponsor_flows(
             c_tranche = t
             break
 
-    c_amount = deal.get_tranche_amount(c_tranche) if c_tranche else 0
+    # Only include C-piece if sponsor is principal
+    c_amount = deal.get_tranche_amount(c_tranche) if (c_tranche and is_principal) else 0
 
     principal_flows = []
     interest_flows = []
@@ -197,43 +202,63 @@ def _calc_sponsor_flows(
 
     for m in months:
         if m == 0:
-            # Sponsor funds C-piece, receives origination fee
+            # Principal mode: fund C-piece. Aggregator mode: no investment.
+            # Both receive origination fee
             principal_flows.append(-c_amount)
             interest_flows.append(0)
             fee_flows.append(deal.fees.calculate_origination(deal.loan_amount))
         elif m == exit_month:
-            # Get C-piece back + interest + exit fee + spread
             sofr = sofr_curve[m]
 
-            # C-piece interest
-            c_interest = c_amount * (c_tranche.get_rate(sofr) if c_tranche else 0) / 12
+            # C-piece interest (only if principal)
+            c_interest = c_amount * (c_tranche.get_rate(sofr) if c_tranche else 0) / 12 if is_principal else 0
 
-            # Spread income: borrower pays - (A + B cost)
+            # Spread income: borrower pays - (A + B + C cost)
+            # In aggregator mode, C-piece cost goes to C investor, not us
             borrower_interest = deal.loan_amount * deal.get_borrower_rate(sofr) / 12
-            a_b_cost = sum(
-                deal.get_tranche_amount(t) * t.get_rate(sofr) / 12
-                for t in deal.tranches if t.tranche_type != TrancheType.C
-            )
-            spread_income = borrower_interest - a_b_cost - c_interest
 
-            principal_flows.append(c_amount)
+            # Cost to pay all tranches (A, B, and C if aggregator)
+            if is_principal:
+                # We keep C, so only pay A + B
+                tranche_cost = sum(
+                    deal.get_tranche_amount(t) * t.get_rate(sofr) / 12
+                    for t in deal.tranches if t.tranche_type != TrancheType.C
+                )
+                spread_income = borrower_interest - tranche_cost - c_interest
+            else:
+                # Aggregator: pay all tranches including C investor
+                tranche_cost = sum(
+                    deal.get_tranche_amount(t) * t.get_rate(sofr) / 12
+                    for t in deal.tranches
+                )
+                spread_income = borrower_interest - tranche_cost
+
+            principal_flows.append(c_amount)  # Get C back if principal, 0 if aggregator
             interest_flows.append(c_interest + spread_income)
 
             exit_fee = deal.fees.calculate_exit(deal.loan_amount)
             ext_fee = deal.fees.calculate_extension(deal.loan_amount) if has_extension else 0
             fee_flows.append(exit_fee + ext_fee)
         else:
-            # Monthly: C interest + spread
+            # Monthly: C interest (if principal) + spread + mgmt fees
             sofr = sofr_curve[m]
 
-            c_interest = c_amount * (c_tranche.get_rate(sofr) if c_tranche else 0) / 12
+            c_interest = c_amount * (c_tranche.get_rate(sofr) if c_tranche else 0) / 12 if is_principal else 0
 
             borrower_interest = deal.loan_amount * deal.get_borrower_rate(sofr) / 12
-            a_b_cost = sum(
-                deal.get_tranche_amount(t) * t.get_rate(sofr) / 12
-                for t in deal.tranches if t.tranche_type != TrancheType.C
-            )
-            spread_income = borrower_interest - a_b_cost - c_interest
+
+            if is_principal:
+                tranche_cost = sum(
+                    deal.get_tranche_amount(t) * t.get_rate(sofr) / 12
+                    for t in deal.tranches if t.tranche_type != TrancheType.C
+                )
+                spread_income = borrower_interest - tranche_cost - c_interest
+            else:
+                tranche_cost = sum(
+                    deal.get_tranche_amount(t) * t.get_rate(sofr) / 12
+                    for t in deal.tranches
+                )
+                spread_income = borrower_interest - tranche_cost
 
             principal_flows.append(0)
             interest_flows.append(c_interest + spread_income)
@@ -244,7 +269,14 @@ def _calc_sponsor_flows(
     irr = _calc_irr(total_flows)
     total_invested = abs(total_flows[0]) if total_flows[0] < 0 else 0
     total_returned = sum(f for f in total_flows if f > 0)
-    moic = total_returned / total_invested if total_invested else float('inf')
+
+    # For aggregator mode with no investment, calculate ROI differently
+    if total_invested > 0:
+        moic = total_returned / total_invested
+    else:
+        # No investment - MOIC is infinite, show total profit instead
+        moic = float('inf')
+
     profit = sum(total_flows)
 
     return CashflowResult(

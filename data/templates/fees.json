@@ -1,0 +1,67 @@
+{
+  "Conservative": {
+    "name": "Conservative",
+    "description": "Lower fees for competitive positioning and repeat borrowers",
+    "origination_fee": 0.0075,
+    "exit_fee": 0.004,
+    "extension_fee": 0.004,
+    "monthly_asset_mgmt_fee": 0,
+    "a_spread": 0.0175,
+    "b_spread": 0.05,
+    "c_target": 0.10,
+    "borrower_spread": 0.035,
+    "typical_use": "Repeat borrowers, large deals, competitive situations"
+  },
+  "Market": {
+    "name": "Market Standard",
+    "description": "Standard market pricing for typical deals",
+    "origination_fee": 0.01,
+    "exit_fee": 0.005,
+    "extension_fee": 0.005,
+    "monthly_asset_mgmt_fee": 0,
+    "a_spread": 0.02,
+    "b_spread": 0.06,
+    "c_target": 0.12,
+    "borrower_spread": 0.04,
+    "typical_use": "Standard deals, moderate leverage, good credit"
+  },
+  "Aggressive": {
+    "name": "Aggressive",
+    "description": "Premium pricing for higher-risk or complex deals",
+    "origination_fee": 0.015,
+    "exit_fee": 0.0075,
+    "extension_fee": 0.0075,
+    "monthly_asset_mgmt_fee": 0.0005,
+    "a_spread": 0.025,
+    "b_spread": 0.07,
+    "c_target": 0.15,
+    "borrower_spread": 0.05,
+    "typical_use": "Turnaround situations, new operators, high LTV"
+  },
+  "Acquisition": {
+    "name": "Acquisition Financing",
+    "description": "Structured for acquisition financing with higher fees",
+    "origination_fee": 0.0125,
+    "exit_fee": 0.006,
+    "extension_fee": 0.006,
+    "monthly_asset_mgmt_fee": 0,
+    "a_spread": 0.0225,
+    "b_spread": 0.065,
+    "c_target": 0.13,
+    "borrower_spread": 0.045,
+    "typical_use": "Acquisition financing, new relationships"
+  },
+  "Refinance": {
+    "name": "Refinance",
+    "description": "Lower origination for refinance deals",
+    "origination_fee": 0.0075,
+    "exit_fee": 0.005,
+    "extension_fee": 0.005,
+    "monthly_asset_mgmt_fee": 0,
+    "a_spread": 0.0175,
+    "b_spread": 0.055,
+    "c_target": 0.11,
+    "borrower_spread": 0.0375,
+    "typical_use": "Refinancing existing debt, seasoned operators"
+  }
+}

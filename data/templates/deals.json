@@ -1,0 +1,97 @@
+{
+  "Small SNF (50 beds)": {
+    "deal_name": "Small SNF (50 beds)",
+    "property_value": 8000000,
+    "loan_amount": 6800000,
+    "term_months": 36,
+    "expected_hud_month": 24,
+    "borrower_spread": 0.04,
+    "tranches": [
+      {"type": "A", "percentage": 0.70, "rate_type": "floating", "spread": 0.02},
+      {"type": "B", "percentage": 0.20, "rate_type": "floating", "spread": 0.06},
+      {"type": "C", "percentage": 0.10, "rate_type": "fixed", "spread": 0.12}
+    ],
+    "fees": {
+      "origination_fee": 0.01,
+      "exit_fee": 0.005,
+      "extension_fee": 0.005
+    },
+    "description": "Typical small skilled nursing facility with 50 beds. Conservative leverage at 85% LTV."
+  },
+  "Large SNF (150 beds)": {
+    "deal_name": "Large SNF (150 beds)",
+    "property_value": 25000000,
+    "loan_amount": 21250000,
+    "term_months": 36,
+    "expected_hud_month": 30,
+    "borrower_spread": 0.035,
+    "tranches": [
+      {"type": "A", "percentage": 0.75, "rate_type": "floating", "spread": 0.0175},
+      {"type": "B", "percentage": 0.17, "rate_type": "floating", "spread": 0.055},
+      {"type": "C", "percentage": 0.08, "rate_type": "fixed", "spread": 0.12}
+    ],
+    "fees": {
+      "origination_fee": 0.0075,
+      "exit_fee": 0.005,
+      "extension_fee": 0.005
+    },
+    "description": "Large skilled nursing facility. Better pricing due to size and diversification."
+  },
+  "SNF Portfolio (3 Properties)": {
+    "deal_name": "SNF Portfolio (3 Properties)",
+    "property_value": 45000000,
+    "loan_amount": 36000000,
+    "term_months": 42,
+    "expected_hud_month": 36,
+    "borrower_spread": 0.0325,
+    "tranches": [
+      {"type": "A", "percentage": 0.78, "rate_type": "floating", "spread": 0.015},
+      {"type": "B", "percentage": 0.15, "rate_type": "floating", "spread": 0.05},
+      {"type": "C", "percentage": 0.07, "rate_type": "fixed", "spread": 0.12}
+    ],
+    "fees": {
+      "origination_fee": 0.0065,
+      "exit_fee": 0.004,
+      "extension_fee": 0.004
+    },
+    "description": "Portfolio of 3 SNF properties. Best pricing tier with most favorable terms."
+  },
+  "Transitional Care Facility": {
+    "deal_name": "Transitional Care Facility",
+    "property_value": 15000000,
+    "loan_amount": 12000000,
+    "term_months": 36,
+    "expected_hud_month": 24,
+    "borrower_spread": 0.045,
+    "tranches": [
+      {"type": "A", "percentage": 0.65, "rate_type": "floating", "spread": 0.0225},
+      {"type": "B", "percentage": 0.22, "rate_type": "floating", "spread": 0.065},
+      {"type": "C", "percentage": 0.13, "rate_type": "fixed", "spread": 0.14}
+    ],
+    "fees": {
+      "origination_fee": 0.0125,
+      "exit_fee": 0.0075,
+      "extension_fee": 0.005
+    },
+    "description": "Higher-acuity transitional care. Slightly higher risk profile with better returns."
+  },
+  "Value-Add SNF": {
+    "deal_name": "Value-Add SNF",
+    "property_value": 12000000,
+    "loan_amount": 9600000,
+    "term_months": 36,
+    "expected_hud_month": 30,
+    "borrower_spread": 0.05,
+    "tranches": [
+      {"type": "A", "percentage": 0.60, "rate_type": "floating", "spread": 0.025},
+      {"type": "B", "percentage": 0.25, "rate_type": "floating", "spread": 0.07},
+      {"type": "C", "percentage": 0.15, "rate_type": "fixed", "spread": 0.15}
+    ],
+    "fees": {
+      "origination_fee": 0.015,
+      "exit_fee": 0.01,
+      "extension_fee": 0.0075
+    },
+    "description": "Turnaround situation requiring operational improvements. Higher risk/reward profile."
+  }
+}

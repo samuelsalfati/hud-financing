@@ -89,6 +89,7 @@ def run_scenario(
     deal: Deal,
     scenario: Scenario,
     base_sofr_curve: list[float],
+    sponsor_is_principal: bool = True,
 ) -> ScenarioResult:
     """Run a single scenario and return results"""
 
@@ -101,6 +102,7 @@ def run_scenario(
         sofr_curve=sofr_curve,
         exit_month=scenario.exit_month,
         has_extension=scenario.has_extension,
+        sponsor_is_principal=sponsor_is_principal,
     )
 
     # Calculate borrower all-in cost
@@ -127,6 +129,7 @@ def run_scenarios(
     deal: Deal,
     scenarios: list[Scenario],
     base_sofr_curve: list[float],
+    sponsor_is_principal: bool = True,
 ) -> list[ScenarioResult]:
     """Run multiple scenarios"""
-    return [run_scenario(deal, s, base_sofr_curve) for s in scenarios]
+    return [run_scenario(deal, s, base_sofr_curve, sponsor_is_principal) for s in scenarios]
