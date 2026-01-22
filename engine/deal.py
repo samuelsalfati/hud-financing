@@ -157,6 +157,38 @@ class ReserveStructure:
 
 
 @dataclass
+class FundTerms:
+    """Fund economics for B-Piece and C-Piece funds"""
+    aum_fee_pct: float = 0.015  # Annual AUM/management fee (1.5%)
+    promote_pct: float = 0.20  # Carried interest / promote (20%)
+    hurdle_rate: float = 0.08  # Preferred return / hurdle (8%)
+
+    def calculate_annual_aum_fee(self, invested_capital: float) -> float:
+        """Calculate annual AUM fee"""
+        return invested_capital * self.aum_fee_pct
+
+    def calculate_monthly_aum_fee(self, invested_capital: float) -> float:
+        """Calculate monthly AUM fee"""
+        return self.calculate_annual_aum_fee(invested_capital) / 12
+
+    def calculate_promote(self, invested_capital: float, total_return: float, holding_months: int) -> float:
+        """
+        Calculate promote/carry at exit
+        Returns the promote amount owed to GP/Aggregator
+        """
+        # Annualized hurdle
+        annualized_hurdle = (1 + self.hurdle_rate) ** (holding_months / 12) - 1
+        hurdle_amount = invested_capital * annualized_hurdle
+
+        # Profit above hurdle
+        profit = total_return - invested_capital
+        excess_profit = max(0, profit - hurdle_amount)
+
+        # Promote is % of excess
+        return excess_profit * self.promote_pct
+
+
+@dataclass
 class Tranche:
     """Represents a single tranche in the capital stack"""
     tranche_type: TrancheType
@@ -164,6 +196,7 @@ class Tranche:
     rate_type: RateType
     spread: float  # Spread over SOFR (for floating) or fixed rate
     is_current_pay: bool = True  # True = paid monthly, False = accrued
+    fee_allocation_pct: float = 0.0  # % of origination/exit fees allocated to this tranche
 
     @property
     def name(self) -> str:
@@ -174,6 +207,10 @@ class Tranche:
         if self.rate_type == RateType.FLOATING:
             return sofr + self.spread
         return self.spread  # Fixed rate
+
+    def get_ltv_contribution(self, total_ltv: float) -> float:
+        """Calculate this tranche's LTV contribution on property"""
+        return self.percentage * total_ltv
 
 
 @dataclass
@@ -232,6 +269,17 @@ class Deal:
     # NEW: DSCR Inputs (optional)
     dscr_inputs: Optional[DSCRInputs] = None
 
+    # NEW: Fund Terms for B and C pieces
+    b_fund_terms: FundTerms = field(default_factory=lambda: FundTerms(
+        aum_fee_pct=0.015, promote_pct=0.20, hurdle_rate=0.08
+    ))
+    c_fund_terms: FundTerms = field(default_factory=lambda: FundTerms(
+        aum_fee_pct=0.02, promote_pct=0.20, hurdle_rate=0.10
+    ))
+
+    # NEW: Aggregator co-invest in C-piece
+    aggregator_coinvest_pct: float = 0.10  # 10% of C-piece
+
     # Deal metadata
     deal_name: str = "Untitled Deal"
     property_address: str = ""
@@ -273,6 +321,59 @@ class Deal:
         if abs(total_percentage - 1.0) > 0.001:
             raise ValueError(f"Tranche percentages must sum to 100%, got {total_percentage*100}%")
         return True
+
+    # Fund and Aggregator methods
+
+    def get_tranche_by_type(self, tranche_type: TrancheType) -> Optional[Tranche]:
+        """Get tranche by type"""
+        target_value = tranche_type.value if hasattr(tranche_type, 'value') else tranche_type
+        for t in self.tranches:
+            if t.tranche_type.value == target_value:
+                return t
+        return None
+
+    def get_aggregator_fee_allocation(self) -> float:
+        """Calculate aggregator's share of fees (100% - sum of tranche allocations)"""
+        total_tranche_allocation = sum(t.fee_allocation_pct for t in self.tranches)
+        return max(0, 1.0 - total_tranche_allocation)
+
+    def get_aggregator_origination_fee(self) -> float:
+        """Calculate aggregator's origination fee income"""
+        total_fee = self.fees.calculate_origination(self.loan_amount)
+        return total_fee * self.get_aggregator_fee_allocation()
+
+    def get_aggregator_exit_fee(self) -> float:
+        """Calculate aggregator's exit fee income"""
+        total_fee = self.fees.calculate_exit(self.loan_amount)
+        return total_fee * self.get_aggregator_fee_allocation()
+
+    def get_b_piece_amount(self) -> float:
+        """Get B-piece invested capital"""
+        b_tranche = self.get_tranche_by_type(TrancheType.B)
+        return self.loan_amount * b_tranche.percentage if b_tranche else 0
+
+    def get_c_piece_amount(self) -> float:
+        """Get C-piece invested capital"""
+        c_tranche = self.get_tranche_by_type(TrancheType.C)
+        return self.loan_amount * c_tranche.percentage if c_tranche else 0
+
+    def get_aggregator_coinvest_amount(self) -> float:
+        """Calculate aggregator's co-investment in C-piece"""
+        return self.get_c_piece_amount() * self.aggregator_coinvest_pct
+
+    def get_annual_b_aum_fee(self) -> float:
+        """Calculate annual AUM fee from B-piece fund"""
+        return self.b_fund_terms.calculate_annual_aum_fee(self.get_b_piece_amount())
+
+    def get_annual_c_aum_fee(self) -> float:
+        """Calculate annual AUM fee from C-piece fund"""
+        # AUM fee on LP capital only (exclude aggregator co-invest)
+        lp_capital = self.get_c_piece_amount() * (1 - self.aggregator_coinvest_pct)
+        return self.c_fund_terms.calculate_annual_aum_fee(lp_capital)
+
+    def get_total_annual_aum_fees(self) -> float:
+        """Calculate total annual AUM fees"""
+        return self.get_annual_b_aum_fee() + self.get_annual_c_aum_fee()
 
     # NEW METHODS
 
@@ -345,6 +446,7 @@ class Deal:
                     "rate_type": t.rate_type.value,
                     "spread": t.spread,
                     "is_current_pay": t.is_current_pay,
+                    "fee_allocation_pct": t.fee_allocation_pct,
                 }
                 for t in self.tranches
             ],
@@ -373,6 +475,17 @@ class Deal:
                 "noi_annual": self.dscr_inputs.noi_annual,
                 "capex_reserve_annual": self.dscr_inputs.capex_reserve_annual,
             } if self.dscr_inputs else None,
+            "b_fund_terms": {
+                "aum_fee_pct": self.b_fund_terms.aum_fee_pct,
+                "promote_pct": self.b_fund_terms.promote_pct,
+                "hurdle_rate": self.b_fund_terms.hurdle_rate,
+            },
+            "c_fund_terms": {
+                "aum_fee_pct": self.c_fund_terms.aum_fee_pct,
+                "promote_pct": self.c_fund_terms.promote_pct,
+                "hurdle_rate": self.c_fund_terms.hurdle_rate,
+            },
+            "aggregator_coinvest_pct": self.aggregator_coinvest_pct,
         }
 
     @classmethod
@@ -385,6 +498,7 @@ class Deal:
                 rate_type=RateType(t["rate_type"]),
                 spread=t["spread"],
                 is_current_pay=t.get("is_current_pay", True),
+                fee_allocation_pct=t.get("fee_allocation_pct", 0.0),
             )
             for t in data.get("tranches", [])
         ]
@@ -426,6 +540,21 @@ class Deal:
                 capex_reserve_annual=dscr_data.get("capex_reserve_annual", 0),
             )
 
+        # Fund terms
+        b_fund_data = data.get("b_fund_terms", {})
+        b_fund_terms = FundTerms(
+            aum_fee_pct=b_fund_data.get("aum_fee_pct", 0.015),
+            promote_pct=b_fund_data.get("promote_pct", 0.20),
+            hurdle_rate=b_fund_data.get("hurdle_rate", 0.08),
+        )
+
+        c_fund_data = data.get("c_fund_terms", {})
+        c_fund_terms = FundTerms(
+            aum_fee_pct=c_fund_data.get("aum_fee_pct", 0.02),
+            promote_pct=c_fund_data.get("promote_pct", 0.20),
+            hurdle_rate=c_fund_data.get("hurdle_rate", 0.10),
+        )
+
         return cls(
             deal_name=data.get("deal_name", "Untitled Deal"),
             property_value=data.get("property_value", 0),
@@ -441,6 +570,9 @@ class Deal:
             reserves=reserves,
             prepayment=prepayment,
             dscr_inputs=dscr_inputs,
+            b_fund_terms=b_fund_terms,
+            c_fund_terms=c_fund_terms,
+            aggregator_coinvest_pct=data.get("aggregator_coinvest_pct", 0.10),
         )
 
     def save_to_file(self, filepath: str):

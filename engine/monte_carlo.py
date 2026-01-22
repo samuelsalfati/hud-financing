@@ -243,8 +243,9 @@ def run_monte_carlo(
             # Simplified loss calculation
             loss = deal.loan_amount * (1 - recovery_rate)
 
-            # C-piece takes first loss
-            c_amount = deal.loan_amount * deal.tranches[2].percentage
+            # C-piece takes first loss - find C tranche by value
+            c_tranche = next((t for t in deal.tranches if t.tranche_type.value == "C"), None)
+            c_amount = deal.loan_amount * c_tranche.percentage if c_tranche else 0
             c_loss = min(loss, c_amount)
 
             # Calculate loss-adjusted metrics

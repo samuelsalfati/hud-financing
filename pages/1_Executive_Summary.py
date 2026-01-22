@@ -1,7 +1,8 @@
 """
-Executive Summary Page - Clean, professional deal analysis
+Executive Summary Page - Deal configuration with fund economics
 """
 import streamlit as st
+import math
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -10,8 +11,8 @@ from components.styles import get_page_css, page_header
 from components.auth import check_password
 from components.sidebar import render_logo, render_sofr_indicator
 from components.gauges import create_irr_gauge, create_moic_gauge, create_ltv_gauge, create_dscr_gauge
-from engine.deal import Deal, Tranche, TrancheType, RateType, FeeStructure
-from engine.cashflows import generate_cashflows
+from engine.deal import Deal, Tranche, TrancheType, RateType, FeeStructure, FundTerms
+from engine.cashflows import generate_cashflows, generate_fund_cashflows
 from engine.dscr import calculate_dscr_from_deal
 import plotly.graph_objects as go
 
@@ -27,146 +28,659 @@ sofr_data = render_sofr_indicator()
 current_sofr = sofr_data.rate
 render_logo()
 
-# Header
-st.markdown(page_header("Executive Summary", "Deal analysis at a glance"), unsafe_allow_html=True)
 
 # =============================================================================
-# COMPACT DEAL CONFIG
+# SESSION STATE DEFAULTS - Persist inputs across page navigation
 # =============================================================================
 
-# Custom CSS for tighter inputs
+# Initialize session state only once at app start
+if 'app_initialized' not in st.session_state:
+    st.session_state.app_initialized = True
+    st.session_state.input_values = {}
+
+
+def get_default(key, default_value):
+    """Get value from session state or return default"""
+    if 'input_values' not in st.session_state:
+        st.session_state.input_values = {}
+    return st.session_state.input_values.get(key, default_value)
+
+
+def save_input(key, value):
+    """Save input value to session state"""
+    if 'input_values' not in st.session_state:
+        st.session_state.input_values = {}
+    st.session_state.input_values[key] = value
+
+
+def reset_all_inputs():
+    """Reset all inputs to defaults"""
+    st.session_state.input_values = {}
+    # Clear deal-related session state
+    for key in ['deal_params', 'deal', 'results', 'fund_results', 'aggregator_summary']:
+        if key in st.session_state:
+            del st.session_state[key]
+
+
+# Helper functions for formatting
+def safe_pct(val, decimals=1):
+    """Format percentage, handling inf/nan"""
+    if val is None or math.isinf(val) or math.isnan(val):
+        return "N/A"
+    return f"{val:.{decimals}%}"
+
+def safe_moic(val):
+    """Format MOIC, handling inf/nan"""
+    if val is None or math.isinf(val) or math.isnan(val):
+        return "N/A"
+    return f"{val:.2f}x"
+
+# Header with Reset button
+header_col1, header_col2 = st.columns([6, 1])
+with header_col1:
+    st.markdown(page_header("Executive Summary", "Deal configuration & analysis"), unsafe_allow_html=True)
+with header_col2:
+    st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)  # Spacer
+    if st.button("🔄 Reset Deal", help="Clear all inputs and start fresh", type="secondary"):
+        reset_all_inputs()
+        st.rerun()
+
+# =============================================================================
+# EDUCATIONAL SECTION - Understanding the Structure
+# =============================================================================
+with st.expander("📚 How This Works - Key Terms & Fund Flow", expanded=False):
+    st.markdown("""
+    ### Capital Structure Overview
+
+    This platform models a **bridge loan** for skilled nursing facilities (SNFs) awaiting HUD permanent financing.
+    The loan is split into three tranches with different risk/return profiles:
+
+    | Tranche | Risk Level | Typical Investor | Position |
+    |---------|------------|------------------|----------|
+    | **A-Piece** | Lowest | Bank | Senior (paid first) |
+    | **B-Piece** | Medium | Mezz Fund LPs | Middle |
+    | **C-Piece** | Highest | First Loss Fund LPs | Junior (paid last) |
+
+    ---
+
+    ### Key Terms Explained
+
+    #### Returns: Gross vs Net
+
+    | Term | Definition | Who Sees This |
+    |------|------------|---------------|
+    | **Gross IRR/MOIC** | Returns before any fund fees | The tranche itself |
+    | **LP Net IRR/MOIC** | Returns after AUM fees & promote | What LPs actually receive |
+
+    **Example:** If C-Piece Gross IRR = 15%, after 2% AUM fee and 20% promote, LP Net IRR ≈ 11%
+
+    ---
+
+    #### Fund Economics (B & C Funds)
+
+    | Fee Type | What It Is | When Paid | Who Receives |
+    |----------|------------|-----------|--------------|
+    | **AUM Fee** | % of LP capital per year | Monthly | Aggregator |
+    | **Promote (Carry)** | % of profits above hurdle | At Exit | Aggregator |
+    | **Hurdle Rate** | Min return LPs get before promote kicks in | - | Threshold |
+
+    **Example Flow:**
+    1. C-Fund LP invests $1M
+    2. Monthly: LP pays ~$1,667 AUM fee (2%/yr ÷ 12)
+    3. At exit: If profit = $200K and hurdle (10%) achieved:
+       - LP gets first 10% ($100K)
+       - Remaining $100K split: 80% LP ($80K) + 20% Promote ($20K)
+
+    ---
+
+    #### Aggregator Income Sources
+
+    ```
+    ┌─────────────────────────────────────────────────────────────┐
+    │                    AGGREGATOR TOTAL INCOME                   │
+    ├─────────────────────────────────────────────────────────────┤
+    │  1. Fee Allocation     → Share of origination & exit fees   │
+    │  2. B-Fund AUM Fees    → Annual % of B-Fund LP capital      │
+    │  3. C-Fund AUM Fees    → Annual % of C-Fund LP capital      │
+    │  4. B-Fund Promote     → Carry on B-Fund profits > hurdle   │
+    │  5. C-Fund Promote     → Carry on C-Fund profits > hurdle   │
+    │  6. Co-Invest Returns  → Direct returns on own C investment │
+    └─────────────────────────────────────────────────────────────┘
+    ```
+
+    ---
+
+    #### Co-Investment
+
+    When the Aggregator **co-invests** in the C-Piece:
+    - They put their own capital at risk (alongside LPs)
+    - Their portion is **fee-free** (no AUM fee on their own money)
+    - They earn the **gross C-Piece return** on their investment
+    - This aligns Aggregator interests with LPs
+
+    ---
+
+    ### Money Flow Diagram
+
+    ```
+    BORROWER pays interest
+           ↓
+    ┌──────────────────────────────────────────────────────────┐
+    │                    LOAN WATERFALL                         │
+    │  A-Piece (Bank) ←── Gets paid FIRST (senior)             │
+    │  B-Piece Fund   ←── Gets paid SECOND (mezz)              │
+    │  C-Piece Fund   ←── Gets paid LAST (first loss)          │
+    └──────────────────────────────────────────────────────────┘
+           ↓
+    ┌──────────────────────────────────────────────────────────┐
+    │               FUND WATERFALL (B & C)                      │
+    │  1. Return LP capital (principal)                        │
+    │  2. Pay LP hurdle return (e.g., 8-10%)                   │
+    │  3. Split remaining: LP (80%) + Aggregator Promote (20%) │
+    └──────────────────────────────────────────────────────────┘
+    ```
+
+    ---
+
+    ### Quick Glossary
+
+    | Term | Definition |
+    |------|------------|
+    | **IRR** | Internal Rate of Return - annualized return accounting for timing |
+    | **MOIC** | Multiple on Invested Capital - total return / investment |
+    | **LTV** | Loan-to-Value - loan amount / property value |
+    | **SOFR** | Secured Overnight Financing Rate - benchmark interest rate |
+    | **Spread** | Additional interest above SOFR (e.g., SOFR + 200bps) |
+    | **bps** | Basis points - 1/100th of 1% (100 bps = 1%) |
+    | **HUD Exit** | When permanent HUD financing closes & bridge loan repays |
+    """)
+
+# Custom CSS for beautiful sections
 st.markdown("""<style>
-.stNumberInput > div > div > input { padding: 0.4rem 0.5rem; }
-.stSelectbox > div > div { padding: 0.2rem; }
-div[data-testid="stMetric"] { background: rgba(76,201,240,0.05); padding: 0.5rem; border-radius: 8px; }
-div[data-testid="stMetric"] label { font-size: 0.75rem; }
-div[data-testid="stMetric"] div[data-testid="stMetricValue"] { font-size: 1.1rem; }
-.calculated-metric { background: linear-gradient(135deg, rgba(6,255,165,0.1), rgba(76,201,240,0.1)); border: 1px solid rgba(6,255,165,0.3); border-radius: 8px; padding: 0.6rem; text-align: center; }
-.calculated-metric .label { font-size: 0.75rem; color: #78909c; }
-.calculated-metric .value { font-size: 1.2rem; font-weight: 600; color: #06ffa5; }
+.stNumberInput > div > div > input { padding: 0.4rem 0.5rem; font-size: 0.9rem; }
+.stSelectbox > div > div { padding: 0.2rem 0; }
+
+/* Section containers */
+.section-box {
+    background: linear-gradient(135deg, rgba(26,35,50,0.9), rgba(15,25,40,0.95));
+    border-radius: 12px;
+    padding: 1.2rem;
+    margin: 0.8rem 0;
+    border: 1px solid rgba(255,255,255,0.08);
+}
+.section-box-a {
+    border-left: 4px solid #4cc9f0;
+    background: linear-gradient(135deg, rgba(76,201,240,0.08), rgba(26,35,50,0.95));
+}
+.section-box-b {
+    border-left: 4px solid #ffa15a;
+    background: linear-gradient(135deg, rgba(255,161,90,0.08), rgba(26,35,50,0.95));
+}
+.section-box-c {
+    border-left: 4px solid #ef553b;
+    background: linear-gradient(135deg, rgba(239,85,59,0.08), rgba(26,35,50,0.95));
+}
+.section-box-agg {
+    border-left: 4px solid #06ffa5;
+    background: linear-gradient(135deg, rgba(6,255,165,0.08), rgba(26,35,50,0.95));
+}
+
+/* Section titles */
+.section-title {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.section-title-a { color: #4cc9f0; }
+.section-title-b { color: #ffa15a; }
+.section-title-c { color: #ef553b; }
+.section-title-agg { color: #06ffa5; }
+
+/* Metric boxes */
+.metric-box {
+    background: rgba(0,0,0,0.2);
+    border-radius: 8px;
+    padding: 0.6rem;
+    text-align: center;
+}
+.metric-label { font-size: 0.7rem; color: #78909c; margin-bottom: 0.2rem; }
+.metric-value { font-size: 1.1rem; font-weight: 600; }
+.metric-value-cyan { color: #4cc9f0; }
+.metric-value-orange { color: #ffa15a; }
+.metric-value-red { color: #ef553b; }
+.metric-value-green { color: #06ffa5; }
+
+/* LTV Summary box */
+.ltv-summary {
+    background: linear-gradient(135deg, rgba(6,255,165,0.15), rgba(76,201,240,0.1));
+    border: 2px solid rgba(6,255,165,0.4);
+    border-radius: 10px;
+    padding: 1rem;
+    margin: 1rem 0;
+}
+
+/* Compact inputs */
+.compact-row { margin-bottom: 0.3rem; }
 </style>""", unsafe_allow_html=True)
 
-# Config in columns - no expander, just clean layout
-st.markdown("##### ⚙️ Deal Parameters")
+# =============================================================================
+# SECTION 1: PROPERTY & DEAL BASICS
+# =============================================================================
+st.markdown("""<div class="section-box">
+<div class="section-title" style="color:#e0e0e0;">📋 Property & Deal Basics</div>
+</div>""", unsafe_allow_html=True)
 
-# Row 1: Property & Loan
-c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
+col1, col2, col3, col4, col5 = st.columns(5)
 
-with c1:
-    property_value = st.number_input("Property ($M)", min_value=1, max_value=500, value=120, step=5) * 1_000_000
+with col1:
+    property_value = st.number_input(
+        "Property Value ($M)", min_value=1, max_value=500,
+        value=get_default('property_value_m', 120), step=5, key="prop_val"
+    ) * 1_000_000
+    save_input('property_value_m', property_value // 1_000_000)
 
-with c2:
-    ltv_pct = st.number_input("LTV (%)", min_value=50, max_value=90, value=85, step=5)
+with col2:
+    ltv_pct = st.number_input(
+        "Total LTV (%)", min_value=50, max_value=90,
+        value=get_default('ltv_pct', 85), step=5, key="ltv_input"
+    )
+    save_input('ltv_pct', ltv_pct)
     ltv = ltv_pct / 100
     loan_amount = property_value * ltv
 
-with c3:
-    equity_cushion = property_value - loan_amount
-    st.markdown(f'<div class="calculated-metric"><div class="label">Borrower Equity</div><div class="value">${equity_cushion/1e6:.1f}M</div></div>', unsafe_allow_html=True)
-
-with c4:
-    term_months = st.selectbox("Term (mo)", [24, 30, 36, 42, 48], index=2)
-
-with c5:
-    hud_month = st.number_input("HUD Exit (mo)", min_value=12, max_value=48, value=24)
-
-with c6:
-    borrower_bps = st.number_input("Borr Sprd (bps)", min_value=200, max_value=800, value=400, step=25)
+with col3:
+    borrower_bps = st.number_input(
+        "Borrower Spread (bps)", min_value=200, max_value=800,
+        value=get_default('borrower_bps', 400), step=25, key="borr_spread"
+    )
+    save_input('borrower_bps', borrower_bps)
     borrower_spread = borrower_bps / 10000
 
-with c7:
-    st.markdown(f'<div class="calculated-metric"><div class="label">Loan Amount</div><div class="value">${loan_amount/1e6:.0f}M</div></div>', unsafe_allow_html=True)
-
-# Row 2: Capital Stack - Allocation & Pricing
-c1, c2, c3, c4, c5, c6 = st.columns(6)
-
-with c1:
-    a_pct = st.number_input("A-Piece (%)", min_value=50, max_value=85, value=70, step=5) / 100
-
-with c2:
-    b_pct = st.number_input("B-Piece (%)", min_value=5, max_value=40, value=20, step=5) / 100
-
-with c3:
-    c_pct = max(0, 1 - a_pct - b_pct)
-    st.markdown(f'<div class="calculated-metric"><div class="label">C-Piece (%)</div><div class="value">{c_pct:.0%}</div></div>', unsafe_allow_html=True)
-
-with c4:
-    a_spread = st.number_input("A Sprd (bps)", min_value=100, max_value=400, value=200, step=25) / 10000
-
-with c5:
-    b_spread = st.number_input("B Sprd (bps)", min_value=300, max_value=1000, value=600, step=50) / 10000
-
-with c6:
-    c_target = st.number_input("C Return (%)", min_value=8, max_value=25, value=12, help="Target return for equity") / 100
-
-# Row 2b: Sponsor Role
-st.markdown("##### 🎯 Sponsor Role")
-role_col1, role_col2, role_col3 = st.columns([2, 2, 3])
-
-with role_col1:
-    sponsor_role = st.radio(
-        "Your Role",
-        ["Principal", "Aggregator"],
-        horizontal=True,
-        help="Principal = invest C-piece | Aggregator = earn fees only",
-        key="sponsor_role_selector"
+with col4:
+    term_months = st.selectbox(
+        "Term (months)", [24, 30, 36, 42, 48],
+        index=get_default('term_idx', 2), key="term_sel"
     )
-    is_principal = sponsor_role == "Principal"
+    save_input('term_idx', [24, 30, 36, 42, 48].index(term_months))
 
-with role_col2:
-    if is_principal:
-        st.markdown(f"""<div style="background:rgba(239,85,59,0.1); border:1px solid rgba(239,85,59,0.3); border-radius:8px; padding:0.6rem; margin-top:0.5rem;">
-<div style="color:#ef553b; font-weight:600; font-size:0.85rem;">💰 You Invest C-Piece</div>
-<div style="color:#b0bec5; font-size:0.8rem;">Capital at risk: ${loan_amount * c_pct / 1e6:.1f}M</div>
-</div>""", unsafe_allow_html=True)
-    else:
-        st.markdown(f"""<div style="background:rgba(6,255,165,0.1); border:1px solid rgba(6,255,165,0.3); border-radius:8px; padding:0.6rem; margin-top:0.5rem;">
-<div style="color:#06ffa5; font-weight:600; font-size:0.85rem;">🔄 Capital-Light Model</div>
-<div style="color:#b0bec5; font-size:0.8rem;">No capital at risk • Fee income only</div>
-</div>""", unsafe_allow_html=True)
+with col5:
+    hud_month = st.number_input(
+        "Expected HUD Exit", min_value=12, max_value=48,
+        value=get_default('hud_month', 24), key="hud_exit"
+    )
+    save_input('hud_month', hud_month)
 
-with role_col3:
-    if is_principal:
-        st.markdown("""<div style="color:#78909c; font-size:0.8rem; margin-top:0.5rem;">
-<strong>You earn:</strong> C-piece returns + origination fee + exit fee + spread income<br>
-<strong>Risk:</strong> First-loss position if borrower defaults
-</div>""", unsafe_allow_html=True)
-    else:
-        st.markdown("""<div style="color:#78909c; font-size:0.8rem; margin-top:0.5rem;">
-<strong>You earn:</strong> Origination fee + exit fee + management fees + spread<br>
-<strong>Risk:</strong> Operational only • C-piece sold to investor
-</div>""", unsafe_allow_html=True)
+# Calculated metrics row
+equity_cushion = property_value - loan_amount
+borrower_rate = current_sofr + borrower_spread
 
-# Row 3: Fees & Rates
-c1, c2, c3, c4, c5, c6 = st.columns(6)
+m1, m2, m3, m4 = st.columns(4)
+with m1:
+    st.markdown(f'<div class="metric-box"><div class="metric-label">Loan Amount</div><div class="metric-value metric-value-cyan">${loan_amount/1e6:.1f}M</div></div>', unsafe_allow_html=True)
+with m2:
+    st.markdown(f'<div class="metric-box"><div class="metric-label">Borrower Equity</div><div class="metric-value metric-value-green">${equity_cushion/1e6:.1f}M ({1-ltv:.0%})</div></div>', unsafe_allow_html=True)
+with m3:
+    st.markdown(f'<div class="metric-box"><div class="metric-label">SOFR (Live)</div><div class="metric-value metric-value-cyan">{current_sofr:.2%}</div></div>', unsafe_allow_html=True)
+with m4:
+    st.markdown(f'<div class="metric-box"><div class="metric-label">Borrower All-In Rate</div><div class="metric-value metric-value-orange">{borrower_rate:.2%}</div></div>', unsafe_allow_html=True)
+
+# Fees row
+st.markdown("##### Fees")
+fee1, fee2, fee3, fee4 = st.columns(4)
+
+with fee1:
+    orig_fee_bps = st.number_input(
+        "Origination (bps)", min_value=50, max_value=300,
+        value=get_default('orig_fee_bps', 100), step=25, key="orig_fee"
+    )
+    save_input('orig_fee_bps', orig_fee_bps)
+    orig_fee = orig_fee_bps / 10000
+
+with fee2:
+    exit_fee_bps = st.number_input(
+        "Exit Fee (bps)", min_value=0, max_value=200,
+        value=get_default('exit_fee_bps', 50), step=25, key="exit_fee"
+    )
+    save_input('exit_fee_bps', exit_fee_bps)
+    exit_fee = exit_fee_bps / 10000
+
+with fee3:
+    ext_fee_bps = st.number_input(
+        "Extension (bps)", min_value=0, max_value=200,
+        value=get_default('ext_fee_bps', 50), step=25, key="ext_fee"
+    )
+    save_input('ext_fee_bps', ext_fee_bps)
+    ext_fee = ext_fee_bps / 10000
+
+with fee4:
+    total_fees = loan_amount * (orig_fee + exit_fee)
+    st.markdown(f'<div class="metric-box"><div class="metric-label">Total Fees (Orig+Exit)</div><div class="metric-value metric-value-green">${total_fees:,.0f}</div></div>', unsafe_allow_html=True)
+
+st.markdown("---")
+
+# =============================================================================
+# SECTION 2: A-PIECE (BANK)
+# =============================================================================
+st.markdown("""<div class="section-box section-box-a">
+<div class="section-title section-title-a">🏦 A-Piece (Senior Bank Debt)</div>
+""", unsafe_allow_html=True)
+
+a1, a2, a3, a4, a5 = st.columns([1,1,1,1,1.2])
+
+with a1:
+    a_pct = st.number_input(
+        "% of Loan", min_value=50, max_value=85,
+        value=get_default('a_pct', 70), step=5, key="a_pct_input"
+    ) / 100
+    save_input('a_pct', int(a_pct * 100))
+
+with a2:
+    a_spread_bps = st.number_input(
+        "SOFR + (bps)", min_value=100, max_value=400,
+        value=get_default('a_spread_bps', 200), step=25, key="a_spread"
+    )
+    save_input('a_spread_bps', a_spread_bps)
+    a_spread = a_spread_bps / 10000
+
+with a3:
+    a_fee_alloc = st.number_input(
+        "Fee Alloc (%)", min_value=0, max_value=50,
+        value=get_default('a_fee_alloc', 10), step=5, key="a_fee_alloc",
+        help="Bank's share of fees"
+    ) / 100
+    save_input('a_fee_alloc', int(a_fee_alloc * 100))
+
+with a4:
+    a_amt = loan_amount * a_pct
+    st.markdown(f'<div class="metric-box"><div class="metric-label">Amount</div><div class="metric-value metric-value-cyan">${a_amt/1e6:.1f}M</div></div>', unsafe_allow_html=True)
+
+with a5:
+    a_ltv = a_pct * ltv
+    st.markdown(f'<div class="metric-box"><div class="metric-label">LTV on Property</div><div class="metric-value metric-value-cyan">{a_ltv:.1%}</div></div>', unsafe_allow_html=True)
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+# =============================================================================
+# SECTION 3: B-PIECE FUND
+# =============================================================================
+st.markdown("""<div class="section-box section-box-b">
+<div class="section-title section-title-b">📊 B-Piece Fund (Mezzanine)</div>
+""", unsafe_allow_html=True)
+
+b1, b2, b3, b4, b5 = st.columns([1,1,1,1,1.2])
+
+with b1:
+    b_pct = st.number_input(
+        "% of Loan", min_value=5, max_value=40,
+        value=get_default('b_pct', 20), step=5, key="b_pct_input"
+    ) / 100
+    save_input('b_pct', int(b_pct * 100))
+
+with b2:
+    b_spread_bps = st.number_input(
+        "SOFR + (bps)", min_value=300, max_value=1000,
+        value=get_default('b_spread_bps', 600), step=50, key="b_spread"
+    )
+    save_input('b_spread_bps', b_spread_bps)
+    b_spread = b_spread_bps / 10000
+
+with b3:
+    b_fee_alloc = st.number_input(
+        "Fee Alloc (%)", min_value=0, max_value=50,
+        value=get_default('b_fee_alloc', 0), step=5, key="b_fee_alloc"
+    ) / 100
+    save_input('b_fee_alloc', int(b_fee_alloc * 100))
+
+with b4:
+    b_amt = loan_amount * b_pct
+    st.markdown(f'<div class="metric-box"><div class="metric-label">Amount</div><div class="metric-value metric-value-orange">${b_amt/1e6:.1f}M</div></div>', unsafe_allow_html=True)
+
+with b5:
+    b_ltv = b_pct * ltv
+    st.markdown(f'<div class="metric-box"><div class="metric-label">LTV on Property</div><div class="metric-value metric-value-orange">{b_ltv:.1%}</div></div>', unsafe_allow_html=True)
+
+# B-Piece Fund Economics
+st.markdown("<div style='margin-top:0.8rem; padding-top:0.8rem; border-top:1px solid rgba(255,161,90,0.2);'><span style='color:#ffa15a; font-size:0.85rem;'>Fund Economics</span></div>", unsafe_allow_html=True)
+b_econ1, b_econ2, b_econ3, b_econ4 = st.columns(4)
+
+with b_econ1:
+    b_aum_fee = st.number_input(
+        "AUM Fee (%/yr)", min_value=0.0, max_value=3.0,
+        value=get_default('b_aum_fee', 1.5), step=0.25, format="%.2f", key="b_aum"
+    ) / 100
+    save_input('b_aum_fee', b_aum_fee * 100)
+
+with b_econ2:
+    b_promote = st.number_input(
+        "Promote (%)", min_value=0, max_value=30,
+        value=get_default('b_promote', 20), step=5, key="b_promote"
+    ) / 100
+    save_input('b_promote', int(b_promote * 100))
+
+with b_econ3:
+    b_hurdle = st.number_input(
+        "Hurdle (%)", min_value=0, max_value=15,
+        value=get_default('b_hurdle', 8), step=1, key="b_hurdle"
+    ) / 100
+    save_input('b_hurdle', int(b_hurdle * 100))
+
+with b_econ4:
+    b_annual_aum = b_amt * b_aum_fee
+    st.markdown(f'<div class="metric-box"><div class="metric-label">Annual AUM Fee</div><div class="metric-value metric-value-orange">${b_annual_aum:,.0f}</div></div>', unsafe_allow_html=True)
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+# =============================================================================
+# SECTION 4: C-PIECE FUND
+# =============================================================================
+# Validate A + B doesn't exceed 100%
+if a_pct + b_pct > 1.0:
+    st.error(f"⚠️ A-Piece ({a_pct:.0%}) + B-Piece ({b_pct:.0%}) = {(a_pct + b_pct):.0%} exceeds 100%. Please adjust.")
+    c_pct = 0.0
+else:
+    c_pct = 1 - a_pct - b_pct
+
+c_amt = loan_amount * c_pct
+c_ltv = c_pct * ltv
+
+st.markdown("""<div class="section-box section-box-c">
+<div class="section-title section-title-c">🎯 C-Piece Fund (First Loss)</div>
+""", unsafe_allow_html=True)
+
+if c_pct < 0.05 and c_pct > 0:
+    st.warning(f"C-Piece is only {c_pct:.0%} - may be too thin")
+elif c_pct == 0:
+    st.warning("C-Piece is 0% - adjust A/B allocation")
+
+c1, c2, c3, c4, c5 = st.columns([1,1,1,1,1.2])
 
 with c1:
-    orig_fee = st.number_input("Orig Fee (bps)", min_value=50, max_value=300, value=100, step=25) / 10000
+    st.markdown(f'<div class="metric-box"><div class="metric-label">% of Loan</div><div class="metric-value metric-value-red">{c_pct:.0%}</div></div>', unsafe_allow_html=True)
+    st.caption("(100% - A - B)")
 
 with c2:
-    exit_fee = st.number_input("Exit Fee (bps)", min_value=0, max_value=200, value=50, step=25) / 10000
+    c_target = st.number_input(
+        "Target Return (%)", min_value=8, max_value=25,
+        value=get_default('c_target', 12), step=1, key="c_target"
+    ) / 100
+    save_input('c_target', int(c_target * 100))
 
 with c3:
-    ext_fee = st.number_input("Ext Fee (bps)", min_value=0, max_value=200, value=50, step=25) / 10000
+    c_fee_alloc = st.number_input(
+        "Fee Alloc (%)", min_value=0, max_value=50,
+        value=get_default('c_fee_alloc', 0), step=5, key="c_fee_alloc"
+    ) / 100
+    save_input('c_fee_alloc', int(c_fee_alloc * 100))
 
 with c4:
-    st.markdown(f'<div class="calculated-metric"><div class="label">SOFR (Live)</div><div class="value">{current_sofr:.2%}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="metric-box"><div class="metric-label">Amount</div><div class="metric-value metric-value-red">${c_amt/1e6:.1f}M</div></div>', unsafe_allow_html=True)
 
 with c5:
-    borrower_rate = current_sofr + borrower_spread
-    st.markdown(f'<div class="calculated-metric"><div class="label">Borrower Rate</div><div class="value">{borrower_rate:.2%}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="metric-box"><div class="metric-label">LTV on Property</div><div class="metric-value metric-value-red">{c_ltv:.1%}</div></div>', unsafe_allow_html=True)
 
-with c6:
-    blended_cost = (a_pct * (current_sofr + a_spread) + b_pct * (current_sofr + b_spread) + c_pct * c_target)
-    st.markdown(f'<div class="calculated-metric"><div class="label">Blended Cost</div><div class="value">{blended_cost:.2%}</div></div>', unsafe_allow_html=True)
+# C-Piece Fund Economics
+st.markdown("<div style='margin-top:0.8rem; padding-top:0.8rem; border-top:1px solid rgba(239,85,59,0.2);'><span style='color:#ef553b; font-size:0.85rem;'>Fund Economics</span></div>", unsafe_allow_html=True)
+c_econ1, c_econ2, c_econ3, c_econ4 = st.columns(4)
 
-st.divider()
+with c_econ1:
+    c_aum_fee = st.number_input(
+        "AUM Fee (%/yr)", min_value=0.0, max_value=3.0,
+        value=get_default('c_aum_fee', 2.0), step=0.25, format="%.2f", key="c_aum"
+    ) / 100
+    save_input('c_aum_fee', c_aum_fee * 100)
+
+with c_econ2:
+    c_promote = st.number_input(
+        "Promote (%)", min_value=0, max_value=30,
+        value=get_default('c_promote', 20), step=5, key="c_promote"
+    ) / 100
+    save_input('c_promote', int(c_promote * 100))
+
+with c_econ3:
+    c_hurdle = st.number_input(
+        "Hurdle (%)", min_value=0, max_value=20,
+        value=get_default('c_hurdle', 10), step=1, key="c_hurdle"
+    ) / 100
+    save_input('c_hurdle', int(c_hurdle * 100))
+
+with c_econ4:
+    c_annual_aum = c_amt * c_aum_fee  # Placeholder, will recalculate after agg_coinvest
+    st.markdown(f'<div class="metric-box"><div class="metric-label">Annual AUM Fee</div><div class="metric-value metric-value-red">${c_annual_aum:,.0f}</div></div>', unsafe_allow_html=True)
+
+st.markdown("</div>", unsafe_allow_html=True)
 
 # =============================================================================
-# BUILD & CALCULATE
+# LTV SUMMARY BOX (Green)
+# =============================================================================
+total_ltv = a_ltv + b_ltv + c_ltv  # Should equal ltv
+
+st.markdown(f"""<div class="ltv-summary">
+<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
+<div>
+<div style="color:#06ffa5; font-weight:600; font-size:1rem;">Capital Stack Summary</div>
+<div style="color:#78909c; font-size:0.8rem;">Total LTV on Property: <strong style="color:#06ffa5;">{ltv:.0%}</strong></div>
+</div>
+<div style="display:flex; gap:2rem; flex-wrap:wrap;">
+<div style="text-align:center;">
+<div style="color:#4cc9f0; font-size:1.2rem; font-weight:700;">{a_ltv:.1%}</div>
+<div style="color:#78909c; font-size:0.7rem;">A-Piece LTV</div>
+</div>
+<div style="text-align:center;">
+<div style="color:#ffa15a; font-size:1.2rem; font-weight:700;">{b_ltv:.1%}</div>
+<div style="color:#78909c; font-size:0.7rem;">B-Piece LTV</div>
+</div>
+<div style="text-align:center;">
+<div style="color:#ef553b; font-size:1.2rem; font-weight:700;">{c_ltv:.1%}</div>
+<div style="color:#78909c; font-size:0.7rem;">C-Piece LTV</div>
+</div>
+<div style="text-align:center; padding-left:1rem; border-left:2px solid rgba(6,255,165,0.3);">
+<div style="color:#06ffa5; font-size:1.2rem; font-weight:700;">{1-ltv:.0%}</div>
+<div style="color:#78909c; font-size:0.7rem;">Borrower Equity</div>
+</div>
+</div>
+</div>
+</div>""", unsafe_allow_html=True)
+
+# =============================================================================
+# SECTION 5: AGGREGATOR
+# =============================================================================
+st.markdown("""<div class="section-box section-box-agg">
+<div class="section-title section-title-agg">💼 Aggregator</div>
+""", unsafe_allow_html=True)
+
+# Calculate aggregator fee allocation
+total_fee_alloc = a_fee_alloc + b_fee_alloc + c_fee_alloc
+if total_fee_alloc > 1.0:
+    st.warning(f"⚠️ Fee allocation ({total_fee_alloc:.0%}) exceeds 100%. Aggregator gets 0%.")
+    agg_fee_alloc = 0
+else:
+    agg_fee_alloc = 1 - total_fee_alloc
+
+agg_orig_fee = loan_amount * orig_fee * agg_fee_alloc
+agg_exit_fee = loan_amount * exit_fee * agg_fee_alloc
+
+# Co-invest input in Aggregator section
+agg_input1, agg_input2, agg_input3, agg_input4 = st.columns(4)
+
+with agg_input1:
+    agg_coinvest = st.number_input(
+        "Co-Invest in C (%)", min_value=0, max_value=100,
+        value=get_default('agg_coinvest', 10), step=5, key="agg_coinvest",
+        help="Aggregator co-invests in C-piece (fee-free)"
+    ) / 100
+    save_input('agg_coinvest', int(agg_coinvest * 100))
+
+with agg_input2:
+    agg_coinvest_amt = c_amt * agg_coinvest
+    st.markdown(f'<div class="metric-box"><div class="metric-label">Co-Invest Amount</div><div class="metric-value metric-value-green">${agg_coinvest_amt/1e6:.2f}M</div></div>', unsafe_allow_html=True)
+
+with agg_input3:
+    c_lp_capital = c_amt * (1 - agg_coinvest)
+    st.markdown(f'<div class="metric-box"><div class="metric-label">C-Fund LP Capital</div><div class="metric-value metric-value-red">${c_lp_capital/1e6:.2f}M</div></div>', unsafe_allow_html=True)
+
+with agg_input4:
+    c_annual_aum = c_lp_capital * c_aum_fee  # Recalculate with LP capital only
+    total_annual_aum = b_annual_aum + c_annual_aum
+    st.markdown(f'<div class="metric-box"><div class="metric-label">Total AUM/yr</div><div class="metric-value metric-value-green">${total_annual_aum:,.0f}</div></div>', unsafe_allow_html=True)
+
+st.markdown("<div style='margin-top:0.8rem;'></div>", unsafe_allow_html=True)
+
+agg_col1, agg_col2, agg_col3 = st.columns(3)
+
+with agg_col1:
+    st.markdown(f"""<div style="background:rgba(0,0,0,0.2); border-radius:8px; padding:0.8rem;">
+<div style="color:#06ffa5; font-weight:600; font-size:0.85rem; margin-bottom:0.5rem;">Fee Income</div>
+<div style="display:flex; justify-content:space-between; color:#b0bec5; font-size:0.8rem;">
+<span>Origination ({agg_fee_alloc:.0%})</span><span style="color:#e0e0e0;">${agg_orig_fee:,.0f}</span>
+</div>
+<div style="display:flex; justify-content:space-between; color:#b0bec5; font-size:0.8rem;">
+<span>Exit ({agg_fee_alloc:.0%})</span><span style="color:#e0e0e0;">${agg_exit_fee:,.0f}</span>
+</div>
+<div style="display:flex; justify-content:space-between; color:#06ffa5; font-size:0.9rem; font-weight:600; margin-top:0.5rem; padding-top:0.5rem; border-top:1px solid rgba(6,255,165,0.2);">
+<span>Total</span><span>${agg_orig_fee + agg_exit_fee:,.0f}</span>
+</div>
+</div>""", unsafe_allow_html=True)
+
+with agg_col2:
+    st.markdown(f"""<div style="background:rgba(0,0,0,0.2); border-radius:8px; padding:0.8rem;">
+<div style="color:#06ffa5; font-weight:600; font-size:0.85rem; margin-bottom:0.5rem;">AUM Fees (Annual)</div>
+<div style="display:flex; justify-content:space-between; color:#b0bec5; font-size:0.8rem;">
+<span>B-Fund ({b_aum_fee:.1%})</span><span style="color:#ffa15a;">${b_annual_aum:,.0f}</span>
+</div>
+<div style="display:flex; justify-content:space-between; color:#b0bec5; font-size:0.8rem;">
+<span>C-Fund ({c_aum_fee:.1%})</span><span style="color:#ef553b;">${c_annual_aum:,.0f}</span>
+</div>
+<div style="display:flex; justify-content:space-between; color:#06ffa5; font-size:0.9rem; font-weight:600; margin-top:0.5rem; padding-top:0.5rem; border-top:1px solid rgba(6,255,165,0.2);">
+<span>Total/yr</span><span>${total_annual_aum:,.0f}</span>
+</div>
+</div>""", unsafe_allow_html=True)
+
+with agg_col3:
+    st.markdown(f"""<div style="background:rgba(0,0,0,0.2); border-radius:8px; padding:0.8rem;">
+<div style="color:#06ffa5; font-weight:600; font-size:0.85rem; margin-bottom:0.5rem;">Promote (Carry)</div>
+<div style="display:flex; justify-content:space-between; color:#b0bec5; font-size:0.8rem;">
+<span>B-Fund</span><span style="color:#ffa15a;">{b_promote:.0%} above {b_hurdle:.0%}</span>
+</div>
+<div style="display:flex; justify-content:space-between; color:#b0bec5; font-size:0.8rem;">
+<span>C-Fund</span><span style="color:#ef553b;">{c_promote:.0%} above {c_hurdle:.0%}</span>
+</div>
+<div style="display:flex; justify-content:space-between; color:#06ffa5; font-size:0.9rem; font-weight:600; margin-top:0.5rem; padding-top:0.5rem; border-top:1px solid rgba(6,255,165,0.2);">
+<span>Calculated at exit</span><span>→</span>
+</div>
+</div>""", unsafe_allow_html=True)
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+st.markdown("---")
+
+# =============================================================================
+# BUILD DEAL & CALCULATE
 # =============================================================================
 
-# Save deal params to session state for other pages
+# Save all params to session state
 st.session_state['deal_params'] = {
     'property_value': property_value,
     'loan_amount': loan_amount,
@@ -180,14 +694,25 @@ st.session_state['deal_params'] = {
     'a_spread': a_spread,
     'b_spread': b_spread,
     'c_target': c_target,
+    'a_fee_alloc': a_fee_alloc,
+    'b_fee_alloc': b_fee_alloc,
+    'c_fee_alloc': c_fee_alloc,
+    'agg_fee_alloc': agg_fee_alloc,
     'orig_fee': orig_fee,
     'exit_fee': exit_fee,
     'ext_fee': ext_fee,
     'borrower_spread': borrower_spread,
     'current_sofr': current_sofr,
     'borrower_rate': borrower_rate,
-    'sponsor_role': sponsor_role,
-    'is_principal': is_principal,
+    'b_aum_fee': b_aum_fee,
+    'b_promote': b_promote,
+    'b_hurdle': b_hurdle,
+    'c_aum_fee': c_aum_fee,
+    'c_promote': c_promote,
+    'c_hurdle': c_hurdle,
+    'agg_coinvest': agg_coinvest,
+    'agg_coinvest_amt': agg_coinvest_amt,
+    'is_principal': agg_coinvest > 0,
 }
 
 try:
@@ -197,288 +722,227 @@ try:
         term_months=term_months,
         expected_hud_month=hud_month,
         tranches=[
-            Tranche(TrancheType.A, a_pct, RateType.FLOATING, a_spread),
-            Tranche(TrancheType.B, b_pct, RateType.FLOATING, b_spread),
-            Tranche(TrancheType.C, c_pct, RateType.FIXED, c_target),
+            Tranche(TrancheType.A, a_pct, RateType.FLOATING, a_spread, fee_allocation_pct=a_fee_alloc),
+            Tranche(TrancheType.B, b_pct, RateType.FLOATING, b_spread, fee_allocation_pct=b_fee_alloc),
+            Tranche(TrancheType.C, c_pct, RateType.FIXED, c_target, fee_allocation_pct=c_fee_alloc),
         ],
         fees=FeeStructure(origination_fee=orig_fee, exit_fee=exit_fee, extension_fee=ext_fee),
         borrower_spread=borrower_spread,
+        b_fund_terms=FundTerms(aum_fee_pct=b_aum_fee, promote_pct=b_promote, hurdle_rate=b_hurdle),
+        c_fund_terms=FundTerms(aum_fee_pct=c_aum_fee, promote_pct=c_promote, hurdle_rate=c_hurdle),
+        aggregator_coinvest_pct=agg_coinvest,
     )
 
-    results = generate_cashflows(deal, [current_sofr] * 60, hud_month, sponsor_is_principal=is_principal)
+    sofr_curve = [current_sofr] * 60
+
+    is_principal = agg_coinvest > 0
+    results = generate_cashflows(deal, sofr_curve, hud_month, sponsor_is_principal=is_principal)
+
+    fund_results = generate_fund_cashflows(deal, sofr_curve, hud_month, has_extension=False)
+    aggregator_summary = fund_results.get('aggregator')
+
     st.session_state['deal'] = deal
     st.session_state['results'] = results
+    st.session_state['fund_results'] = fund_results
+    st.session_state['aggregator_summary'] = aggregator_summary
+
     sponsor = results.get("sponsor")
     irr = sponsor.irr if sponsor else 0
     moic = sponsor.moic if sponsor else 1
+
 except Exception as e:
     st.error(f"Error calculating deal: {e}")
-    deal = None
-    results = None
-    sponsor = None
-    irr = 0
-    moic = 1
     st.stop()
 
 # =============================================================================
-# KEY METRICS - Compact gauges
+# CAPITAL STACK VISUALIZATION
 # =============================================================================
-
-c1, c2, c3, c4 = st.columns(4)
-
-with c1:
-    if is_principal:
-        st.plotly_chart(create_irr_gauge(irr, "IRR"), use_container_width=True, key="g1")
-    else:
-        # Aggregator mode - show Yield on Deal instead of IRR
-        annual_profit = sponsor.total_profit * (12 / hud_month) if hud_month > 0 and sponsor else 0
-        yield_pct = annual_profit / loan_amount if loan_amount > 0 else 0
-        st.plotly_chart(create_irr_gauge(yield_pct, "Yield"), use_container_width=True, key="g1")
-with c2:
-    if is_principal:
-        st.plotly_chart(create_moic_gauge(moic, "MOIC"), use_container_width=True, key="g2")
-    else:
-        # Show total profit in $K
-        profit_display = sponsor.total_profit / 1000 if sponsor else 0
-        st.metric("Total Profit", f"${sponsor.total_profit:,.0f}" if sponsor else "$0")
-with c3:
-    st.plotly_chart(create_ltv_gauge(ltv, "LTV"), use_container_width=True, key="g3")
-with c4:
-    dscr = calculate_dscr_from_deal(loan_amount, borrower_rate, loan_amount * 0.10)
-    st.plotly_chart(create_dscr_gauge(dscr.dscr, "DSCR"), use_container_width=True, key="g4")
-
-# =============================================================================
-# CAPITAL STACK - Full width section
-# =============================================================================
-
-a_amt = loan_amount * a_pct
-b_amt = loan_amount * b_pct
-c_amt = loan_amount * c_pct
 
 st.markdown("### Capital Stack")
 
+# Create stacked bar chart
 fig = go.Figure()
-fig.add_trace(go.Bar(x=[c_amt], y=[""], orientation='h', marker_color="#ef553b",
-    text=[f"C-Piece {c_pct:.0%}"], textposition="inside", textfont={"color":"white", "size":14},
-    insidetextanchor="middle"))
-fig.add_trace(go.Bar(x=[b_amt], y=[""], orientation='h', marker_color="#ffa15a",
-    text=[f"B-Piece {b_pct:.0%}"], textposition="inside", textfont={"color":"white", "size":14},
-    insidetextanchor="middle"))
-fig.add_trace(go.Bar(x=[a_amt], y=[""], orientation='h', marker_color="#4cc9f0",
-    text=[f"A-Piece {a_pct:.0%}"], textposition="inside", textfont={"color":"white", "size":14},
-    insidetextanchor="middle"))
-fig.update_layout(barmode='stack', height=80, showlegend=False, margin=dict(l=0,r=0,t=10,b=10),
-    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-    xaxis={"visible":False}, yaxis={"visible":False},
-    uniformtext={"minsize":12, "mode":"show"})
-st.plotly_chart(fig, use_container_width=True, key="stack")
 
-# Tranche details
-c1, c2, c3 = st.columns(3)
-with c1:
-    st.markdown(f"""<div style="background:rgba(76,201,240,0.1); border-left:4px solid #4cc9f0; padding:0.8rem; border-radius:4px;">
-<div style="color:#4cc9f0; font-weight:600;">A-Piece (Senior)</div>
-<div style="color:#b0bec5; font-size:0.9rem;">${a_amt/1e6:.1f}M ({a_pct:.0%}) @ SOFR+{a_spread*10000:.0f}bps</div>
-<div style="color:#78909c; font-size:0.8rem;">Bank funding • First loss protection</div>
+# Add bars in order from bottom to top (C, B, A)
+fig.add_trace(go.Bar(
+    x=[c_amt], y=[""],
+    orientation='h',
+    marker_color="#ef553b",
+    text=[f"C: {c_pct:.0%}"],
+    textposition="inside",
+    insidetextanchor="middle",
+    textfont={"color": "white", "size": 13, "family": "Arial Black"}
+))
+fig.add_trace(go.Bar(
+    x=[b_amt], y=[""],
+    orientation='h',
+    marker_color="#ffa15a",
+    text=[f"B: {b_pct:.0%}"],
+    textposition="inside",
+    insidetextanchor="middle",
+    textfont={"color": "white", "size": 13, "family": "Arial Black"}
+))
+fig.add_trace(go.Bar(
+    x=[a_amt], y=[""],
+    orientation='h',
+    marker_color="#4cc9f0",
+    text=[f"A: {a_pct:.0%}"],
+    textposition="inside",
+    insidetextanchor="middle",
+    textfont={"color": "white", "size": 13, "family": "Arial Black"}
+))
+
+fig.update_layout(
+    barmode='stack',
+    height=70,
+    showlegend=False,
+    margin=dict(l=0, r=0, t=10, b=10),
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    xaxis={"visible": False},
+    yaxis={"visible": False}
+)
+
+st.plotly_chart(fig, use_container_width=True, key="capital_stack")
+
+# Tranche summary row
+t1, t2, t3 = st.columns(3)
+with t1:
+    st.markdown(f"""<div style="background:rgba(76,201,240,0.1); border-left:3px solid #4cc9f0; padding:0.5rem 0.8rem; border-radius:0 6px 6px 0;">
+<strong style="color:#4cc9f0;">A-Piece</strong> <span style="color:#b0bec5; font-size:0.9rem;">${a_amt/1e6:.1f}M @ S+{a_spread_bps}bps | LTV: {a_ltv:.1%}</span>
 </div>""", unsafe_allow_html=True)
-with c2:
-    st.markdown(f"""<div style="background:rgba(255,161,90,0.1); border-left:4px solid #ffa15a; padding:0.8rem; border-radius:4px;">
-<div style="color:#ffa15a; font-weight:600;">B-Piece (Mezzanine)</div>
-<div style="color:#b0bec5; font-size:0.9rem;">${b_amt/1e6:.1f}M ({b_pct:.0%}) @ SOFR+{b_spread*10000:.0f}bps</div>
-<div style="color:#78909c; font-size:0.8rem;">Yield investors • Second loss</div>
+with t2:
+    st.markdown(f"""<div style="background:rgba(255,161,90,0.1); border-left:3px solid #ffa15a; padding:0.5rem 0.8rem; border-radius:0 6px 6px 0;">
+<strong style="color:#ffa15a;">B-Piece</strong> <span style="color:#b0bec5; font-size:0.9rem;">${b_amt/1e6:.1f}M @ S+{b_spread_bps}bps | LTV: {b_ltv:.1%}</span>
 </div>""", unsafe_allow_html=True)
-with c3:
-    if is_principal:
-        st.markdown(f"""<div style="background:rgba(239,85,59,0.1); border-left:4px solid #ef553b; padding:0.8rem; border-radius:4px;">
-<div style="color:#ef553b; font-weight:600;">C-Piece (You Keep)</div>
-<div style="color:#b0bec5; font-size:0.9rem;">${c_amt/1e6:.1f}M ({c_pct:.0%}) @ {c_target:.0%} target</div>
-<div style="color:#78909c; font-size:0.8rem;">Your capital • First loss position</div>
-</div>""", unsafe_allow_html=True)
-    else:
-        st.markdown(f"""<div style="background:rgba(239,85,59,0.1); border-left:4px solid #ef553b; padding:0.8rem; border-radius:4px;">
-<div style="color:#ef553b; font-weight:600;">C-Piece (Sold to Investor)</div>
-<div style="color:#b0bec5; font-size:0.9rem;">${c_amt/1e6:.1f}M ({c_pct:.0%}) @ {c_target:.0%} target</div>
-<div style="color:#78909c; font-size:0.8rem;">Third-party investor • You earn spread</div>
+with t3:
+    st.markdown(f"""<div style="background:rgba(239,85,59,0.1); border-left:3px solid #ef553b; padding:0.5rem 0.8rem; border-radius:0 6px 6px 0;">
+<strong style="color:#ef553b;">C-Piece</strong> <span style="color:#b0bec5; font-size:0.9rem;">${c_amt/1e6:.1f}M @ {c_target:.0%} | LTV: {c_ltv:.1%}</span>
 </div>""", unsafe_allow_html=True)
 
-st.divider()
+st.markdown("---")
 
 # =============================================================================
-# RECOMMENDATION - Full section with risk analysis
+# RESULTS SECTION
 # =============================================================================
 
-st.markdown("### Investment Recommendation")
+st.markdown("### Returns Analysis")
 
-if irr >= 0.20 and moic >= 1.3 and ltv <= 0.80:
-    rec, color, desc = "STRONG INVEST", "#06ffa5", "Exceptional risk-adjusted returns with conservative leverage. Proceed with standard diligence."
-elif irr >= 0.15 and moic >= 1.2:
-    rec, color, desc = "INVEST", "#00cc96", "Solid returns meeting all investment criteria. Deal is attractive at current terms."
-elif irr >= 0.10:
-    rec, color, desc = "CONDITIONAL", "#ffa15a", "Returns meet minimum threshold but leave limited margin for error. Consider negotiating better terms."
-else:
-    rec, color, desc = "PASS", "#ef553b", "Returns below investment threshold. Do not proceed without significant restructuring."
-
-col1, col2 = st.columns([1, 2])
-
-with col1:
-    st.markdown(f"""<div style="background:rgba(0,0,0,0.3); border:3px solid {color}; border-radius:12px; padding:1.5rem; text-align:center;">
-<div style="font-size:0.8rem; color:#78909c; text-transform:uppercase; letter-spacing:1px;">Recommendation</div>
-<div style="font-size:2.2rem; font-weight:700; color:{color}; margin:0.5rem 0;">{rec}</div>
-<div style="font-size:0.85rem; color:#b0bec5;">{desc}</div>
+# Calculated Aggregator Economics
+if aggregator_summary:
+    st.markdown(f"""<div style="background:linear-gradient(135deg, rgba(6,255,165,0.15), rgba(76,201,240,0.1)); border:2px solid rgba(6,255,165,0.4); border-radius:10px; padding:1rem; margin-bottom:1rem;">
+<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
+<div>
+<div style="color:#06ffa5; font-weight:600;">Aggregator Total Income ({hud_month}mo hold)</div>
+<div style="color:#78909c; font-size:0.8rem;">Fee Allocation + AUM Fees + Promote + Co-Invest Returns</div>
+</div>
+<div style="color:#06ffa5; font-size:1.8rem; font-weight:700;">${aggregator_summary.grand_total:,.0f}</div>
+</div>
 </div>""", unsafe_allow_html=True)
 
-with col2:
-    # Metrics check
-    st.markdown("**Investment Criteria**")
-    mc1, mc2, mc3, mc4 = st.columns(4)
-    with mc1:
-        status = "✅" if irr >= 0.15 else "⚠️" if irr >= 0.10 else "❌"
-        st.metric("IRR", f"{irr:.1%}", delta=f"{status} Target ≥15%", delta_color="off")
-    with mc2:
-        status = "✅" if moic >= 1.2 else "⚠️" if moic >= 1.1 else "❌"
-        st.metric("MOIC", f"{moic:.2f}x", delta=f"{status} Target ≥1.2x", delta_color="off")
-    with mc3:
-        status = "✅" if ltv <= 0.80 else "⚠️" if ltv <= 0.85 else "❌"
-        st.metric("LTV", f"{ltv:.0%}", delta=f"{status} Target ≤80%", delta_color="off")
-    with mc4:
-        status = "✅" if 18 <= hud_month <= 30 else "⚠️"
-        st.metric("HUD Exit", f"Month {hud_month}", delta=f"{status} Typical 18-30", delta_color="off")
-
-    # Risk factors
-    st.markdown("**Key Risks**")
-    rc1, rc2 = st.columns(2)
-    with rc1:
-        rate_risk = "High" if borrower_spread < 0.035 else "Medium" if borrower_spread < 0.05 else "Low"
-        timing_risk = "High" if hud_month > 30 else "Medium" if hud_month > 24 else "Low"
-        st.markdown(f"• **Rate Risk:** {rate_risk} - {'Thin spread buffer' if rate_risk=='High' else 'Adequate spread cushion'}")
-        st.markdown(f"• **Timing Risk:** {timing_risk} - HUD exit at month {hud_month}")
-    with rc2:
-        leverage_risk = "High" if ltv > 0.85 else "Medium" if ltv > 0.75 else "Low"
-        concentration_risk = "Medium" if c_pct < 0.15 else "Low"
-        st.markdown(f"• **Leverage Risk:** {leverage_risk} - {ltv:.0%} LTV")
-        st.markdown(f"• **Concentration:** {concentration_risk} - ${c_amt/1e6:.1f}M equity at risk")
-
-st.divider()
-
-# =============================================================================
-# RETURNS SUMMARY
-# =============================================================================
-
-st.markdown("### Returns Summary")
-
-# Get tranche results
+# Get results for gauges
 a_result = results.get("A")
 b_result = results.get("B")
 c_result = results.get("C")
+b_fund = fund_results.get('B_fund')
+c_fund = fund_results.get('C_fund')
 
-# Tranche Returns
-st.markdown("**Returns by Tranche**")
-c1, c2, c3 = st.columns(3)
+# IRR values
+a_irr = a_result.irr if a_result else 0
+b_gross_irr = b_result.irr if b_result else 0
+b_lp_irr = b_fund.lp_cashflows.irr if b_fund else 0
+c_gross_irr = c_result.irr if c_result else 0
+c_lp_irr = c_fund.lp_cashflows.irr if c_fund else 0
+coinvest_irr = aggregator_summary.coinvest_irr if aggregator_summary else 0
 
-with c1:
-    a_irr = a_result.irr if a_result else 0
-    a_profit = a_result.total_profit if a_result else 0
-    st.markdown(f"""<div style="background:rgba(76,201,240,0.1); border-radius:8px; padding:1rem; text-align:center;">
-<div style="color:#4cc9f0; font-weight:600; font-size:0.9rem;">A-Piece (Senior)</div>
-<div style="color:#b0bec5; font-size:1.4rem; font-weight:700;">{a_irr:.1%} IRR</div>
-<div style="color:#78909c; font-size:0.8rem;">Profit: ${a_profit:,.0f}</div>
+# MOIC values
+a_moic = a_result.moic if a_result else 1
+b_lp_moic = b_fund.lp_cashflows.moic if b_fund else 1
+c_lp_moic = c_fund.lp_cashflows.moic if c_fund else 1
+coinvest_moic = aggregator_summary.coinvest_moic if aggregator_summary else 1
+
+# Dashboard-style IRR Gauges
+st.markdown("#### IRR Dashboard")
+g1, g2, g3, g4 = st.columns(4)
+
+with g1:
+    fig = create_irr_gauge(a_irr, "A-Piece (Bank)", max_val=0.15, thresholds=(0.05, 0.08, 0.12))
+    st.plotly_chart(fig, use_container_width=True, key="gauge_a")
+
+with g2:
+    fig = create_irr_gauge(b_lp_irr, "B-Fund LP Net", max_val=0.25, thresholds=(0.08, 0.12, 0.18))
+    st.plotly_chart(fig, use_container_width=True, key="gauge_b")
+
+with g3:
+    fig = create_irr_gauge(c_lp_irr, "C-Fund LP Net", max_val=0.30, thresholds=(0.10, 0.15, 0.20))
+    st.plotly_chart(fig, use_container_width=True, key="gauge_c")
+
+with g4:
+    fig = create_irr_gauge(coinvest_irr, "Agg Co-Invest", max_val=0.30, thresholds=(0.10, 0.15, 0.20))
+    st.plotly_chart(fig, use_container_width=True, key="gauge_agg")
+
+# MOIC Gauges
+st.markdown("#### MOIC Dashboard")
+m1, m2, m3, m4 = st.columns(4)
+
+with m1:
+    fig = create_moic_gauge(a_moic, "A-Piece", max_val=1.5)
+    st.plotly_chart(fig, use_container_width=True, key="moic_a")
+
+with m2:
+    fig = create_moic_gauge(b_lp_moic, "B-Fund LP", max_val=1.8)
+    st.plotly_chart(fig, use_container_width=True, key="moic_b")
+
+with m3:
+    fig = create_moic_gauge(c_lp_moic, "C-Fund LP", max_val=2.0)
+    st.plotly_chart(fig, use_container_width=True, key="moic_c")
+
+with m4:
+    fig = create_moic_gauge(coinvest_moic, "Agg Co-Invest", max_val=2.0)
+    st.plotly_chart(fig, use_container_width=True, key="moic_agg")
+
+# Compact summary cards below gauges
+st.markdown("#### Quick Summary")
+r1, r2, r3, r4 = st.columns(4)
+
+with r1:
+    st.markdown(f"""<div style="background:rgba(76,201,240,0.1); border-radius:8px; padding:0.8rem; text-align:center; border-left:3px solid #4cc9f0;">
+<div style="color:#4cc9f0; font-weight:600; font-size:0.85rem;">A-Piece (Bank)</div>
+<div style="color:#e0e0e0; font-size:1.4rem; font-weight:700;">{safe_pct(a_irr)}</div>
+<div style="color:#78909c; font-size:0.7rem;">IRR | {safe_moic(a_moic)} MOIC</div>
 </div>""", unsafe_allow_html=True)
 
-with c2:
-    b_irr = b_result.irr if b_result else 0
-    b_profit = b_result.total_profit if b_result else 0
-    st.markdown(f"""<div style="background:rgba(255,161,90,0.1); border-radius:8px; padding:1rem; text-align:center;">
-<div style="color:#ffa15a; font-weight:600; font-size:0.9rem;">B-Piece (Mezz)</div>
-<div style="color:#b0bec5; font-size:1.4rem; font-weight:700;">{b_irr:.1%} IRR</div>
-<div style="color:#78909c; font-size:0.8rem;">Profit: ${b_profit:,.0f}</div>
+with r2:
+    st.markdown(f"""<div style="background:rgba(255,161,90,0.1); border-radius:8px; padding:0.8rem; text-align:center; border-left:3px solid #ffa15a;">
+<div style="color:#ffa15a; font-weight:600; font-size:0.85rem;">B-Fund LP Net</div>
+<div style="color:#e0e0e0; font-size:1.4rem; font-weight:700;">{safe_pct(b_lp_irr)}</div>
+<div style="color:#78909c; font-size:0.7rem;">IRR | {safe_moic(b_lp_moic)} MOIC</div>
 </div>""", unsafe_allow_html=True)
 
-with c3:
-    c_irr = c_result.irr if c_result else 0
-    c_profit = c_result.total_profit if c_result else 0
-    st.markdown(f"""<div style="background:rgba(239,85,59,0.1); border-radius:8px; padding:1rem; text-align:center;">
-<div style="color:#ef553b; font-weight:600; font-size:0.9rem;">C-Piece (Equity)</div>
-<div style="color:#b0bec5; font-size:1.4rem; font-weight:700;">{c_irr:.1%} IRR</div>
-<div style="color:#78909c; font-size:0.8rem;">Profit: ${c_profit:,.0f}</div>
+with r3:
+    st.markdown(f"""<div style="background:rgba(239,85,59,0.1); border-radius:8px; padding:0.8rem; text-align:center; border-left:3px solid #ef553b;">
+<div style="color:#ef553b; font-weight:600; font-size:0.85rem;">C-Fund LP Net</div>
+<div style="color:#e0e0e0; font-size:1.4rem; font-weight:700;">{safe_pct(c_lp_irr)}</div>
+<div style="color:#78909c; font-size:0.7rem;">IRR | {safe_moic(c_lp_moic)} MOIC</div>
 </div>""", unsafe_allow_html=True)
 
-# Our Returns (Sponsor/Investor)
-if is_principal:
-    st.markdown("**Our Returns (Principal - C-Piece + Fees)**")
-else:
-    st.markdown("**Our Returns (Aggregator - Fees + Spread Only)**")
-
-if sponsor and sponsor.months:
-    import math
-
-    if is_principal:
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
-        with c1:
-            st.metric("Investment", f"${c_amt:,.0f}")
-        with c2:
-            st.metric("Interest Income", f"${sum(sponsor.interest_flows):,.0f}")
-        with c3:
-            st.metric("Fee Income", f"${sum(sponsor.fee_flows):,.0f}")
-        with c4:
-            st.metric("Total Profit", f"${sponsor.total_profit:,.0f}")
-        with c5:
-            st.metric("IRR", f"{irr:.1%}")
-        with c6:
-            moic_display = f"{moic:.2f}x" if not math.isinf(moic) else "N/A"
-            st.metric("MOIC", moic_display)
-    else:
-        # Aggregator mode - no investment, show fee breakdown
-        spread_income = sum(sponsor.interest_flows)
-        fee_income = sum(sponsor.fee_flows)
-        total_profit = sponsor.total_profit
-        annual_profit = total_profit * (12 / hud_month) if hud_month > 0 else 0
-        yield_on_deal = annual_profit / loan_amount if loan_amount > 0 else 0
-
-        st.markdown("""<div style="background:rgba(6,255,165,0.1); border:1px solid rgba(6,255,165,0.3); border-radius:8px; padding:0.8rem 1rem; margin-bottom:1rem;">
-<strong style="color:#06ffa5;">💡 Aggregator Mode:</strong>
-<span style="color:#b0bec5;"> IRR is N/A (no capital invested). Use Yield on Deal and Total Profit as key metrics.</span>
+with r4:
+    st.markdown(f"""<div style="background:rgba(6,255,165,0.1); border-radius:8px; padding:0.8rem; text-align:center; border-left:3px solid #06ffa5;">
+<div style="color:#06ffa5; font-weight:600; font-size:0.85rem;">Agg Co-Invest</div>
+<div style="color:#e0e0e0; font-size:1.4rem; font-weight:700;">{safe_pct(coinvest_irr)}</div>
+<div style="color:#78909c; font-size:0.7rem;">IRR | {safe_moic(coinvest_moic)} MOIC</div>
 </div>""", unsafe_allow_html=True)
 
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
-        with c1:
-            st.metric("Investment", "$0")
-        with c2:
-            st.metric("Spread Income", f"${spread_income:,.0f}")
-        with c3:
-            st.metric("Fee Income", f"${fee_income:,.0f}")
-        with c4:
-            st.metric("Total Profit", f"${total_profit:,.0f}")
-        with c5:
-            st.metric("Yield on Deal", f"{yield_on_deal:.2%}")
-        with c6:
-            st.metric("IRR", "N/A", help="No investment = no IRR")
+st.markdown("---")
 
-        # Fee breakdown detail
-        with st.expander("📋 Fee Breakdown"):
-            orig = orig_fee * loan_amount
-            exit_f = exit_fee * loan_amount
-            mgmt = (hud_month - 1) * 0  # Management fees if any
-            st.markdown(f"""
-| Fee Type | Amount |
-|----------|--------|
-| Origination Fee ({orig_fee*10000:.0f} bps) | ${orig:,.0f} |
-| Exit Fee ({exit_fee*10000:.0f} bps) | ${exit_f:,.0f} |
-| Monthly Spread × {hud_month} months | ${spread_income:,.0f} |
-| **Total** | **${total_profit:,.0f}** |
-            """)
-
-st.divider()
-
-# =============================================================================
-# QUICK LINKS
-# =============================================================================
-
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    st.page_link("pages/2_Capital_Stack.py", label="📊 Capital Stack")
-with c2:
-    st.page_link("pages/3_Cashflows.py", label="💰 Cashflows")
-with c3:
-    st.page_link("pages/4_Scenarios.py", label="📈 Scenarios")
-with c4:
-    st.page_link("pages/6_Monte_Carlo.py", label="🎲 Monte Carlo")
+# Quick navigation
+st.markdown("### Detailed Analysis")
+n1, n2, n3, n4 = st.columns(4)
+with n1:
+    st.page_link("pages/2_Capital_Stack.py", label="📊 Capital Stack", use_container_width=True)
+with n2:
+    st.page_link("pages/3_Cashflows.py", label="💰 Cashflows", use_container_width=True)
+with n3:
+    st.page_link("pages/4_Scenarios.py", label="📈 Scenarios", use_container_width=True)
+with n4:
+    st.page_link("pages/6_Monte_Carlo.py", label="🎲 Monte Carlo", use_container_width=True)

@@ -1,5 +1,6 @@
 """
 Monte Carlo Page - Simulation results, distributions, and VaR
+Redesigned with better explanations and cleaner layout
 """
 import streamlit as st
 import numpy as np
@@ -11,8 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from components.styles import get_page_css, page_header
 from components.auth import check_password
 from components.sidebar import render_logo, render_sofr_indicator
-from components.charts import create_histogram, create_fan_chart, create_line_chart, create_multi_line_chart
-from components.gauges import create_probability_gauge, create_irr_gauge
+from components.charts import create_histogram, create_fan_chart
 from engine.monte_carlo import (
     run_monte_carlo,
     MonteCarloConfig,
@@ -20,22 +20,22 @@ from engine.monte_carlo import (
     get_irr_distribution,
     get_sofr_fan_chart_data,
     calculate_probability_metrics,
-    run_stress_test,
 )
 
 
-def fmt_pct(val):
+def fmt_pct(val, decimals=1):
     """Format percentage, handling inf/nan"""
-    if math.isinf(val) or math.isnan(val):
+    if val is None or math.isinf(val) or math.isnan(val):
         return "N/A"
-    return f"{val:.1%}"
+    return f"{val:.{decimals}%}"
 
 
-def fmt_pct2(val):
-    """Format percentage with 2 decimals, handling inf/nan"""
-    if math.isinf(val) or math.isnan(val):
+def fmt_currency(val):
+    """Format currency, handling inf/nan"""
+    if val is None or math.isinf(val) or math.isnan(val):
         return "N/A"
-    return f"{val:.2%}"
+    return f"${val:,.0f}"
+
 
 # Page config
 st.set_page_config(
@@ -63,7 +63,12 @@ if 'deal_params' not in st.session_state:
 p = st.session_state['deal_params']
 deal = st.session_state.get('deal')
 results = st.session_state.get('results')
-is_principal = p.get('is_principal', True)
+coinvest_pct = p.get('agg_coinvest', 0.10)
+
+# Monte Carlo always simulates C-piece investment returns
+# This shows what investors (LPs or co-invest) would earn
+# Aggregator fee income is shown separately
+is_principal = True  # Always simulate C-piece IRR
 
 # Safety check
 if deal is None:
@@ -78,165 +83,342 @@ st.markdown(page_header(
 ), unsafe_allow_html=True)
 
 # Deal Summary Bar
-role_label = "Principal" if is_principal else "Aggregator"
-role_color = "#ef553b" if is_principal else "#06ffa5"
+c_pct = p.get('c_pct', 0.10)
+c_amt = p['loan_amount'] * c_pct
 st.markdown(f"""<div style="background:rgba(76,201,240,0.1); border:1px solid rgba(76,201,240,0.2); border-radius:8px; padding:0.8rem 1.2rem; margin-bottom:1.5rem; display:flex; justify-content:space-between; flex-wrap:wrap; gap:1rem;">
 <span style="color:#b0bec5;">Property: <strong style="color:#4cc9f0;">${p['property_value']/1e6:.0f}M</strong></span>
 <span style="color:#b0bec5;">Loan: <strong style="color:#4cc9f0;">${p['loan_amount']/1e6:.0f}M</strong></span>
 <span style="color:#b0bec5;">LTV: <strong style="color:#4cc9f0;">{p['ltv']:.0%}</strong></span>
-<span style="color:#b0bec5;">Term: <strong style="color:#4cc9f0;">{p['term_months']}mo</strong></span>
+<span style="color:#b0bec5;">C-Piece: <strong style="color:#ef553b;">${c_amt/1e6:.1f}M ({c_pct:.0%})</strong></span>
+<span style="color:#b0bec5;">Exit: <strong style="color:#4cc9f0;">{p['hud_month']}mo</strong></span>
 <span style="color:#b0bec5;">SOFR: <strong style="color:#06ffa5;">{p['current_sofr']:.2%}</strong></span>
-<span style="color:#b0bec5;">Role: <strong style="color:{role_color};">{role_label}</strong></span>
 </div>""", unsafe_allow_html=True)
 
-# Purpose explanation
-st.markdown("""<div style="background:rgba(6,255,165,0.08); border:1px solid rgba(6,255,165,0.2); border-radius:8px; padding:1rem; margin-bottom:1.5rem;">
-<strong style="color:#06ffa5;">📊 What is Monte Carlo Simulation?</strong>
+# Check if C-piece exists and has valid size
+if c_pct <= 0 or c_amt <= 0:
+    st.error(f"""
+    **No C-Piece to simulate!**
+
+    Your capital stack has C-Piece = {c_pct:.0%} (${c_amt:,.0f}).
+
+    Monte Carlo simulates C-Piece investment returns. Please go to Executive Summary
+    and ensure A% + B% < 100% so there's a C-Piece.
+
+    **Current stack:** A = {p.get('a_pct', 0):.0%}, B = {p.get('b_pct', 0):.0%}, C = {c_pct:.0%}
+    """)
+    st.stop()
+
+# Explain what's being simulated
+st.markdown(f"""<div style="background:rgba(239,85,59,0.1); border:1px solid rgba(239,85,59,0.2); border-radius:8px; padding:1rem; margin-bottom:1rem;">
+<strong style="color:#ef553b;">What This Simulates: C-Piece Investment Returns</strong>
 <div style="color:#b0bec5; font-size:0.9rem; margin-top:0.5rem;">
-Monte Carlo simulation runs <strong>thousands of random scenarios</strong> to understand the range of possible outcomes for your investment. Instead of a single "best guess" IRR, you get a probability distribution showing:
-<ul style="margin:0.5rem 0 0 1rem; padding:0;">
-<li><strong>Most likely returns</strong> (median/mean IRR)</li>
-<li><strong>Downside risk</strong> (5th percentile, VaR)</li>
-<li><strong>Upside potential</strong> (95th percentile)</li>
-<li><strong>Probability of hitting targets</strong> (P(IRR > 15%), etc.)</li>
-</ul>
+This Monte Carlo shows returns for <strong>investing in the C-Piece</strong> (${c_amt/1e6:.1f}M first-loss tranche at {c_pct:.0%} of loan).
+Whether you're an LP in the C-Fund or the Aggregator co-investing, this is the return profile for that capital.
+<br><br>
+<span style="color:#78909c;">Note: Fund-level fees (AUM, promote) are not deducted here — this shows <strong>gross C-Piece IRR</strong>.
+For LP net returns after fees, see the Scenarios tab.</span>
 </div>
 </div>""", unsafe_allow_html=True)
 
-# Simulation Parameters
-st.subheader("Simulation Parameters")
+# =============================================================================
+# EDUCATIONAL SECTION
+# =============================================================================
+with st.expander("📚 What is Monte Carlo Simulation? (Click to Learn)", expanded=False):
+    st.markdown("""
+    ### The Problem: We Can't Predict Interest Rates
 
-# Rate Type Selection
-st.markdown("#### Rate Type Analysis")
-rate_type_col1, rate_type_col2 = st.columns([1, 2])
+    In the Scenarios tab, we calculate IRR assuming SOFR stays flat at today's rate.
+    But **SOFR moves constantly** — it could spike, drop, or fluctuate wildly.
 
-with rate_type_col1:
-    rate_type = st.radio(
-        "Rate Structure",
-        ["Floating Rate (SOFR)", "Fixed Rate", "Compare Both"],
-        help="Floating = SOFR + spread, varies monthly | Fixed = locked rate at origination",
-        key="mc_rate_type"
-    )
+    **Your floating-rate income depends on where SOFR goes.** So how do you know what your *real* expected return is?
 
-with rate_type_col2:
-    if rate_type == "Fixed Rate" or rate_type == "Compare Both":
-        default_fixed = (p['current_sofr'] + 0.04) * 100  # SOFR + typical spread, as percentage
-        fixed_rate_pct = st.number_input(
-            "Fixed Rate (%)",
-            min_value=3.0,
-            max_value=20.0,
-            value=round(default_fixed, 2),
-            step=0.25,
-            format="%.2f",
-            help="All-in fixed rate for borrower (e.g., 8.50 for 8.50%)",
-        )
-        fixed_rate = fixed_rate_pct / 100  # Convert back to decimal
-    else:
-        fixed_rate = None
+    ---
+
+    ### The Solution: Run 1,000 "What If" Scenarios
+
+    **Monte Carlo simulation** runs your deal through thousands of different interest rate futures:
+
+    | Simulation | SOFR Path | Your IRR |
+    |------------|-----------|----------|
+    | #1 | Rates rise steadily | 14.2% |
+    | #2 | Rates spike then fall | 12.8% |
+    | #3 | Rates stay flat | 11.5% |
+    | #4 | Rates drop sharply | 9.3% |
+    | ... | ... | ... |
+    | #1000 | Rates volatile | 13.1% |
+
+    Then we look at all 1,000 IRRs and ask:
+    - **What's the average?** (Mean IRR)
+    - **What's the worst 5%?** (Downside risk)
+    - **What's the spread?** (How uncertain are we?)
+
+    ---
+
+    ### What the Results Tell You
+
+    | Metric | Plain English | Example |
+    |--------|---------------|---------|
+    | **Mean IRR** | "On average, across all scenarios, you'll earn..." | 12.5% |
+    | **5th Percentile** | "In bad scenarios (bottom 5%), you'd only earn..." | 8.0% |
+    | **95th Percentile** | "In great scenarios (top 5%), you could earn..." | 17.0% |
+    | **Std Deviation** | "How spread out are the outcomes?" | 2.5% = moderate uncertainty |
+    | **VaR (95%)** | "95% confident your IRR stays above..." | 8.5% |
+
+    ---
+
+    ### Why SOFR Doesn't Move Like Stocks
+
+    Stock prices can go anywhere. But **interest rates** behave differently:
+    - They tend to **revert to a "normal" level** over time
+    - The Fed targets a neutral rate (~3-4%)
+    - Extreme rates (very high or very low) don't last forever
+
+    This is why we use the **Vasicek model** — it captures this "mean-reverting" behavior.
+
+    ---
+
+    ### Real-World Example
+
+    Let's say SOFR is **4.5% today** and you expect it to drift toward **4.0% long-run**:
+
+    ```
+    Month 1:  SOFR = 4.5%  (starting point)
+    Month 6:  SOFR = 4.8%  (random spike)
+    Month 12: SOFR = 4.3%  (drifting back)
+    Month 18: SOFR = 3.9%  (below target)
+    Month 24: SOFR = 4.1%  (back near target)
+    ```
+
+    Each simulation generates a **different path** like this. Your interest income (and IRR) differs for each path.
+
+    ---
+
+    ### When Default Risk is Included
+
+    If you enable default risk, we also simulate **borrower defaults**:
+
+    1. Each month, there's a small chance the borrower defaults
+    2. If they default, the property is sold at a loss (e.g., 65% of value)
+    3. Losses flow through the capital stack: **C-Piece → B-Piece → A-Piece**
+
+    This is exactly how **CLOs (Collateralized Loan Obligations)** work — junior tranches absorb losses first.
+    """)
 
 st.divider()
 
-col1, col2, col3 = st.columns(3)
+# =============================================================================
+# SIMULATION PARAMETERS
+# =============================================================================
+st.markdown("### Simulation Setup")
 
-with col1:
-    st.markdown("**Basic Parameters**")
+# Row 1: Basic settings
+st.markdown("##### Basic Settings")
+basic_col1, basic_col2, basic_col3, basic_col4 = st.columns(4)
+
+with basic_col1:
     num_sims = st.selectbox(
         "Number of Simulations",
         options=[100, 500, 1000, 2500, 5000],
         index=2,
-        help="More simulations = more accurate but slower. 1000 is typically sufficient.",
+        help="More = more accurate but slower. 1000 is usually sufficient.",
     )
 
-    st.markdown("""<div style="font-size:0.8rem; color:#6c757d; margin-top:0.5rem;">
-    💡 Each simulation generates a different SOFR path and calculates the resulting IRR
-    </div>""", unsafe_allow_html=True)
+with basic_col2:
+    exit_month = st.number_input(
+        "Exit Month",
+        min_value=12,
+        max_value=60,
+        value=p['hud_month'],
+        step=6,
+        help="When HUD takeout occurs"
+    )
 
-with col2:
-    st.markdown("**Default Risk**")
+with basic_col3:
     include_default = st.checkbox(
         "Include Default Risk",
         value=False,
-        help="Model potential borrower defaults in simulation",
+        help="Model borrower defaults - losses flow through tranches like a CLO"
     )
 
+with basic_col4:
     if include_default:
-        default_prob = st.slider(
-            "Annual Default Probability",
-            min_value=0.01,
-            max_value=0.10,
-            value=0.02,
-            format="%.1f%%",
-            help="SNF bridge loans: 1-3% typical, 5%+ for distressed",
-        )
-        st.markdown("""<div style="font-size:0.8rem; color:#6c757d; margin-top:0.5rem;">
-        💡 Default = borrower fails to repay. C-piece takes first loss.
-        </div>""", unsafe_allow_html=True)
+        default_prob = st.number_input(
+            "Annual Default Prob (%)",
+            min_value=1,
+            max_value=10,
+            value=2,
+            help="1-3% typical for SNFs, 5%+ for distressed properties"
+        ) / 100
     else:
         default_prob = 0
+        st.markdown("""<div style="padding-top:1.8rem; color:#78909c; font-size:0.85rem;">
+        Default risk disabled
+        </div>""", unsafe_allow_html=True)
 
-with col3:
-    st.markdown("**Vasicek Rate Model**")
+# Default explanation (only show when enabled)
+if include_default:
+    st.markdown(f"""<div style="background:rgba(239,85,59,0.1); border:1px solid rgba(239,85,59,0.2); border-radius:8px; padding:1rem; margin-top:0.5rem;">
+<strong style="color:#ef553b;">How Default Works (CLO-Style Waterfall)</strong>
+<div style="color:#b0bec5; font-size:0.85rem; margin-top:0.5rem;">
+When a borrower <strong>defaults</strong>, they stop paying and the property is sold at a loss. The losses flow through the capital stack:
 
-    with st.expander("ℹ️ What is the Vasicek Model?", expanded=False):
-        st.markdown("""
-        The **Vasicek model** simulates how SOFR rates might evolve over time. It assumes rates:
+<div style="background:rgba(0,0,0,0.2); border-radius:6px; padding:0.8rem; margin:0.8rem 0; font-family:monospace; font-size:0.8rem;">
+<div style="color:#ef553b;">LOSS OCCURS</div>
+<div style="color:#78909c;">↓</div>
+<div><span style="color:#ef553b;">C-Piece absorbs first</span> (first loss / equity tranche)</div>
+<div style="color:#78909c;">↓ if loss > C-Piece</div>
+<div><span style="color:#ffa15a;">B-Piece absorbs next</span> (mezzanine tranche)</div>
+<div style="color:#78909c;">↓ if loss > C + B</div>
+<div><span style="color:#4cc9f0;">A-Piece absorbs last</span> (senior / bank tranche)</div>
+</div>
 
-        - **Mean-revert**: Tend to drift back toward a long-term average
-        - **Are random**: Subject to daily/monthly fluctuations
+<strong>With {default_prob:.0%} annual default probability:</strong>
+<ul style="margin:0.3rem 0 0 1rem; padding:0; font-size:0.8rem;">
+<li>Each simulation randomly decides if/when default happens</li>
+<li>If default occurs, property sells at ~60-70% recovery</li>
+<li>C-Fund LPs (and your co-invest) take first hit</li>
+<li>This is why C-Piece earns higher returns — it's riskier!</li>
+</ul>
+</div>
+</div>""", unsafe_allow_html=True)
 
-        **Formula:** `dS = κ(θ - S)dt + σdW`
+# Row 2: Rate model parameters
+st.markdown("##### SOFR Rate Simulation")
 
-        Where:
-        - `κ` (kappa) = speed of mean reversion
-        - `θ` (theta) = long-run equilibrium rate
-        - `σ` (sigma) = volatility of rate changes
-        """)
+st.markdown("""<div style="background:rgba(76,201,240,0.1); border:1px solid rgba(76,201,240,0.2); border-radius:8px; padding:1rem; margin-bottom:1rem;">
+<strong style="color:#4cc9f0;">What We're Simulating</strong>
+<div style="color:#b0bec5; font-size:0.9rem; margin-top:0.5rem;">
+<strong>SOFR</strong> (Secured Overnight Financing Rate) is the benchmark rate that determines your floating-rate interest payments.
+When SOFR goes <span style="color:#06ffa5;">up</span>, you earn more interest income. When it goes <span style="color:#ef553b;">down</span>, you earn less.
+<br><br>
+We simulate <strong>thousands of possible SOFR paths</strong> to see how your returns might vary. The model assumes SOFR:
+<ul style="margin:0.3rem 0 0 1rem; padding:0;">
+<li>Moves randomly each month (like a stock price)</li>
+<li>But tends to drift back toward a "normal" level over time (unlike stocks)</li>
+</ul>
+</div>
+</div>""", unsafe_allow_html=True)
 
-    mean_reversion = st.slider(
-        "Mean Reversion Speed (κ)",
+rate_col1, rate_col2, rate_col3 = st.columns(3)
+
+with rate_col1:
+    st.markdown("""<div style="background:rgba(6,255,165,0.08); border-radius:8px; padding:0.8rem; margin-bottom:0.5rem;">
+<div style="color:#06ffa5; font-weight:600; font-size:0.85rem;">Where Will SOFR Go?</div>
+<div style="color:#78909c; font-size:0.75rem;">Long-run target rate</div>
+</div>""", unsafe_allow_html=True)
+
+    long_run_mean = st.number_input(
+        "SOFR Long-Run Target (%)",
+        min_value=1.0,
+        max_value=8.0,
+        value=4.0,
+        step=0.5,
+        help="The Federal Reserve's 'neutral' rate is ~2.5-3%. Historical average ~4%. If you think rates will stay high, use 4-5%."
+    ) / 100
+
+    st.markdown(f"""<div style="color:#78909c; font-size:0.75rem; padding:0.3rem;">
+<strong>Example:</strong> If SOFR is {p['current_sofr']:.1%} today and long-run is {long_run_mean:.1%},
+the model expects SOFR to {'rise' if long_run_mean > p['current_sofr'] else 'fall'} over time.
+</div>""", unsafe_allow_html=True)
+
+with rate_col2:
+    st.markdown("""<div style="background:rgba(255,161,90,0.08); border-radius:8px; padding:0.8rem; margin-bottom:0.5rem;">
+<div style="color:#ffa15a; font-weight:600; font-size:0.85rem;">How Fast Does It Get There?</div>
+<div style="color:#78909c; font-size:0.75rem;">Speed of mean reversion</div>
+</div>""", unsafe_allow_html=True)
+
+    mean_reversion = st.number_input(
+        "Reversion Speed (0.1-1.0)",
         min_value=0.1,
         max_value=1.0,
         value=0.3,
-        help="Higher = rates snap back to mean faster. 0.3 = moderate (typical market)",
+        step=0.1,
+        help="Higher = SOFR snaps back to target faster. 0.3 = moderate (typical). 0.1 = slow drift. 0.8 = quick snapback."
     )
 
-    long_run_mean = st.slider(
-        "Long-Run Mean (θ)",
-        min_value=0.02,
-        max_value=0.08,
-        value=0.04,
-        format="%.2f%%",
-        help="Where SOFR trends toward. Fed's 'neutral' rate is ~2.5-3%, historical avg ~4%",
-    )
+    speed_desc = "slow drift" if mean_reversion < 0.2 else "moderate" if mean_reversion < 0.5 else "fast snapback"
+    st.markdown(f"""<div style="color:#78909c; font-size:0.75rem; padding:0.3rem;">
+<strong>You chose:</strong> {speed_desc}<br>
+If SOFR spikes to 6%, it will return to {long_run_mean:.1%} {'slowly over years' if mean_reversion < 0.2 else 'within 1-2 years' if mean_reversion < 0.5 else 'within months'}.
+</div>""", unsafe_allow_html=True)
 
-    volatility = st.slider(
-        "Rate Volatility (σ)",
-        min_value=0.005,
-        max_value=0.04,
-        value=0.015,
-        format="%.3f",
-        help="How much rates fluctuate. 0.015 = normal, 0.03+ = high volatility period",
-    )
+with rate_col3:
+    st.markdown("""<div style="background:rgba(239,85,59,0.08); border-radius:8px; padding:0.8rem; margin-bottom:0.5rem;">
+<div style="color:#ef553b; font-weight:600; font-size:0.85rem;">How Bumpy Is the Ride?</div>
+<div style="color:#78909c; font-size:0.75rem;">Monthly volatility of SOFR</div>
+</div>""", unsafe_allow_html=True)
 
-    st.markdown(f"""<div style="font-size:0.8rem; color:#6c757d; margin-top:0.5rem;">
-    Current SOFR: <strong>{p['current_sofr']:.2%}</strong> → Model expects drift toward <strong>{long_run_mean:.2%}</strong>
-    </div>""", unsafe_allow_html=True)
+    volatility = st.number_input(
+        "SOFR Volatility (%)",
+        min_value=0.5,
+        max_value=4.0,
+        value=1.5,
+        step=0.5,
+        help="How much SOFR jumps around month-to-month. 1% = calm markets. 2%+ = turbulent (like 2022-2023)."
+    ) / 100
 
-# Run simulation button
+    vol_desc = "calm" if volatility < 0.012 else "normal" if volatility < 0.02 else "volatile"
+    vol_example = volatility * 1.5  # ~1.5 std devs for monthly move
+    st.markdown(f"""<div style="color:#78909c; font-size:0.75rem; padding:0.3rem;">
+<strong>You chose:</strong> {vol_desc} markets<br>
+SOFR might swing ±{vol_example:.1%} in a typical month.
+Over a year, could move ±{volatility*100:.0f}% from today.
+</div>""", unsafe_allow_html=True)
+
+# Visual summary
+st.markdown(f"""<div style="background:rgba(26,35,50,0.8); border:1px solid rgba(76,201,240,0.3); border-radius:8px; padding:1rem; margin-top:0.5rem;">
+<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
+<div style="text-align:center;">
+<div style="color:#78909c; font-size:0.7rem;">TODAY</div>
+<div style="color:#4cc9f0; font-size:1.3rem; font-weight:700;">{p['current_sofr']:.2%}</div>
+</div>
+<div style="color:#78909c; font-size:1.5rem;">→</div>
+<div style="text-align:center;">
+<div style="color:#78909c; font-size:0.7rem;">DRIFTS TO</div>
+<div style="color:#06ffa5; font-size:1.3rem; font-weight:700;">{long_run_mean:.2%}</div>
+</div>
+<div style="color:#78909c; font-size:1.5rem;">±</div>
+<div style="text-align:center;">
+<div style="color:#78909c; font-size:0.7rem;">WITH NOISE</div>
+<div style="color:#ffa15a; font-size:1.3rem; font-weight:700;">±{volatility:.1%}/yr</div>
+</div>
+</div>
+</div>""", unsafe_allow_html=True)
+
 st.divider()
-run_col1, run_col2 = st.columns([1, 3])
+
+# =============================================================================
+# RUN SIMULATION
+# =============================================================================
+run_col1, run_col2, run_col3 = st.columns([1, 1, 2])
+
 with run_col1:
-    run_button = st.button("🎲 Run Monte Carlo Simulation", type="primary", use_container_width=True)
+    run_button = st.button(
+        "🎲 Run Simulation",
+        type="primary",
+        use_container_width=True,
+    )
 
 with run_col2:
+    if "mc_result" in st.session_state:
+        clear_button = st.button(
+            "🗑️ Clear Results",
+            type="secondary",
+            use_container_width=True,
+        )
+        if clear_button:
+            del st.session_state['mc_result']
+            st.rerun()
+
+with run_col3:
+    default_text = f" with {default_prob:.1%} default risk" if include_default else ""
     st.markdown(f"""<div style="color:#b0bec5; font-size:0.9rem; padding-top:0.5rem;">
-    Will run <strong>{num_sims}</strong> simulations for <strong>{rate_type}</strong> structure
-    {f'with <strong>{default_prob:.1%}</strong> annual default risk' if include_default else '(no default risk)'}
+    <strong>{num_sims:,}</strong> simulations × <strong>{exit_month}</strong> months{default_text}
     </div>""", unsafe_allow_html=True)
 
 if run_button:
     try:
-        with st.spinner(f"Running {num_sims} simulations..."):
+        with st.spinner(f"Running {num_sims:,} simulations..."):
             config = MonteCarloConfig(
                 num_simulations=num_sims,
                 random_seed=42,
@@ -251,157 +433,108 @@ if run_button:
                 r0=p['current_sofr'],
             )
 
-            # Run floating rate simulation
-            result_float = run_monte_carlo(
+            # Verify deal configuration
+            c_tranche = next((t for t in deal.tranches if t.tranche_type.value == "C"), None)
+            if c_tranche is None:
+                st.error("C-Tranche not found in deal - cannot run simulation")
+                st.stop()
+
+            result = run_monte_carlo(
                 deal,
-                p['hud_month'],
+                exit_month,
                 config=config,
                 vasicek_params=vasicek,
                 sponsor_is_principal=is_principal,
             )
 
-            # Store results
-            st.session_state.mc_result = result_float
-            st.session_state.mc_rate_type = rate_type
+            st.session_state.mc_result = result
+            st.session_state.mc_params = {
+                'num_sims': num_sims,
+                'exit_month': exit_month,
+                'long_run_mean': long_run_mean,
+                'mean_reversion': mean_reversion,
+                'volatility': volatility,
+                'include_default': include_default,
+                'default_prob': default_prob,
+            }
 
-            # If comparing both, also run fixed rate
-            if rate_type == "Fixed Rate" or rate_type == "Compare Both":
-                # For fixed rate, create a flat SOFR curve that results in same all-in rate
-                # Essentially, the "SOFR" is constant at a level that gives fixed_rate as all-in
-                implied_flat_sofr = fixed_rate - 0.04  # Approximate, depends on spread structure
-                fixed_vasicek = VasicekParams(
-                    kappa=10.0,  # Very high mean reversion = nearly constant
-                    theta=implied_flat_sofr,
-                    sigma=0.0001,  # Near-zero volatility
-                    r0=implied_flat_sofr,
-                )
-
-                result_fixed = run_monte_carlo(
-                    deal,
-                    p['hud_month'],
-                    config=config,
-                    vasicek_params=fixed_vasicek,
-                    sponsor_is_principal=is_principal,
-                )
-                st.session_state.mc_result_fixed = result_fixed
-                st.session_state.mc_fixed_rate = fixed_rate
 
     except Exception as e:
         st.error(f"Error running simulation: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
 
-# Display results if available
+# =============================================================================
+# RESULTS
+# =============================================================================
 if "mc_result" in st.session_state:
     result = st.session_state.mc_result
-    stored_rate_type = st.session_state.get('mc_rate_type', 'Floating Rate (SOFR)')
+    params = st.session_state.get('mc_params', {})
 
     st.divider()
 
-    # Float vs Fixed Comparison (if applicable)
-    if stored_rate_type == "Compare Both" and "mc_result_fixed" in st.session_state:
-        result_fixed = st.session_state.mc_result_fixed
-        stored_fixed_rate = st.session_state.get('mc_fixed_rate', 0.08)
+    # Results header
+    st.markdown("### Simulation Results")
 
-        st.subheader("📊 Floating vs Fixed Rate Comparison")
+    # Key metrics in cards
+    st.markdown("##### C-Piece Return Distribution")
 
-        st.markdown(f"""<div style="background:rgba(76,201,240,0.08); border:1px solid rgba(76,201,240,0.2); border-radius:8px; padding:1rem; margin-bottom:1rem;">
-        <strong style="color:#4cc9f0;">Rate Structure Analysis</strong>
-        <div style="color:#b0bec5; font-size:0.9rem; margin-top:0.5rem;">
-        Comparing <strong>Floating Rate</strong> (SOFR + spread, rate varies monthly) vs <strong>Fixed Rate</strong> ({stored_fixed_rate:.2%} locked all-in rate).
-        Floating rates expose you to rate risk but may outperform if rates fall.
-        </div>
-        </div>""", unsafe_allow_html=True)
+    metric_label = "C-Piece IRR"  # Always showing C-piece investment returns
 
-        comp_col1, comp_col2, comp_col3 = st.columns(3)
+    # Row of key metrics
+    m1, m2, m3, m4, m5 = st.columns(5)
 
-        metric_label = "IRR" if is_principal else "Yield"
+    with m1:
+        st.markdown(f"""<div style="background:rgba(6,255,165,0.15); border-radius:8px; padding:1rem; text-align:center;">
+<div style="color:#06ffa5; font-weight:600; font-size:0.85rem;">Mean {metric_label}</div>
+<div style="color:#e0e0e0; font-size:1.8rem; font-weight:700;">{fmt_pct(result.irr_mean)}</div>
+<div style="color:#78909c; font-size:0.75rem;">Expected Return</div>
+</div>""", unsafe_allow_html=True)
 
-        with comp_col1:
-            st.markdown("**Metric**")
-            st.markdown(f"Mean {metric_label}")
-            st.markdown(f"Median {metric_label}")
-            st.markdown("Std Dev (Risk)")
-            st.markdown("5th Percentile")
-            st.markdown("95th Percentile")
+    with m2:
+        st.markdown(f"""<div style="background:rgba(76,201,240,0.15); border-radius:8px; padding:1rem; text-align:center;">
+<div style="color:#4cc9f0; font-weight:600; font-size:0.85rem;">Median {metric_label}</div>
+<div style="color:#e0e0e0; font-size:1.8rem; font-weight:700;">{fmt_pct(result.irr_median)}</div>
+<div style="color:#78909c; font-size:0.75rem;">50th Percentile</div>
+</div>""", unsafe_allow_html=True)
 
-        with comp_col2:
-            st.markdown("**Floating Rate**")
-            st.markdown(f"**{fmt_pct(result.irr_mean)}**")
-            st.markdown(fmt_pct(result.irr_median))
-            st.markdown(fmt_pct(result.irr_std))
-            st.markdown(fmt_pct(result.irr_5th))
-            st.markdown(fmt_pct(result.irr_95th))
+    with m3:
+        st.markdown(f"""<div style="background:rgba(255,161,90,0.15); border-radius:8px; padding:1rem; text-align:center;">
+<div style="color:#ffa15a; font-weight:600; font-size:0.85rem;">Std Deviation</div>
+<div style="color:#e0e0e0; font-size:1.8rem; font-weight:700;">{fmt_pct(result.irr_std)}</div>
+<div style="color:#78909c; font-size:0.75rem;">Uncertainty</div>
+</div>""", unsafe_allow_html=True)
 
-        with comp_col3:
-            st.markdown("**Fixed Rate**")
-            st.markdown(f"**{fmt_pct(result_fixed.irr_mean)}**")
-            st.markdown(fmt_pct(result_fixed.irr_median))
-            st.markdown(fmt_pct(result_fixed.irr_std))
-            st.markdown(fmt_pct(result_fixed.irr_5th))
-            st.markdown(fmt_pct(result_fixed.irr_95th))
+    with m4:
+        st.markdown(f"""<div style="background:rgba(239,85,59,0.15); border-radius:8px; padding:1rem; text-align:center;">
+<div style="color:#ef553b; font-weight:600; font-size:0.85rem;">5th Percentile</div>
+<div style="color:#e0e0e0; font-size:1.8rem; font-weight:700;">{fmt_pct(result.irr_5th)}</div>
+<div style="color:#78909c; font-size:0.75rem;">Downside Case</div>
+</div>""", unsafe_allow_html=True)
 
-        # Recommendation
-        float_better = result.irr_mean > result_fixed.irr_mean
-        float_riskier = result.irr_std > result_fixed.irr_std
-        spread = abs(result.irr_mean - result_fixed.irr_mean)
-
-        if float_better and spread > 0.01:
-            rec_text = f"**Floating rate** shows higher expected {metric_label.lower()} (+{spread:.1%}), but with higher volatility. Suitable if you can tolerate rate risk."
-            rec_color = "#06ffa5"
-        elif not float_better and spread > 0.01:
-            rec_text = f"**Fixed rate** shows higher expected {metric_label.lower()} (+{spread:.1%}) with lower volatility. More predictable returns."
-            rec_color = "#4cc9f0"
-        else:
-            rec_text = f"Both structures show similar expected returns (within {spread:.1%}). Fixed provides more certainty."
-            rec_color = "#b0bec5"
-
-        st.markdown(f"""<div style="background:rgba(6,255,165,0.1); border-left:4px solid {rec_color}; padding:1rem; margin:1rem 0; border-radius:0 8px 8px 0;">
-        <strong style="color:{rec_color};">Recommendation:</strong>
-        <div style="color:#e0e0e0;">{rec_text}</div>
-        </div>""", unsafe_allow_html=True)
-
-        st.divider()
-
-    # Key Statistics
-    metric_label = "IRR" if is_principal else "Yield"
-    st.subheader(f"{metric_label} Distribution Statistics")
-
-    # Aggregator mode notice
-    if not is_principal:
-        st.markdown("""<div style="background:rgba(6,255,165,0.1); border:1px solid rgba(6,255,165,0.2); border-radius:8px; padding:0.8rem; margin-bottom:1rem; font-size:0.9rem;">
-        <strong style="color:#06ffa5;">Aggregator Mode:</strong> As aggregator, you earn fees without capital at risk.
-        "Yield" represents your fee income as an annualized return on deal volume.
-        </div>""", unsafe_allow_html=True)
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        st.metric(f"Mean {metric_label}", fmt_pct(result.irr_mean))
-        st.metric("Std Dev", fmt_pct(result.irr_std))
-
-    with col2:
-        st.metric(f"Median {metric_label}", fmt_pct(result.irr_median))
-        st.metric("5th Percentile", fmt_pct(result.irr_5th))
-
-    with col3:
-        st.metric("95th Percentile", fmt_pct(result.irr_95th))
-        st.metric("VaR (95%)", fmt_pct(result.var_95))
-
-    with col4:
-        st.metric("Expected Shortfall", fmt_pct(result.expected_shortfall_95))
-        if result.default_rate > 0:
-            st.metric("Default Rate", fmt_pct(result.default_rate))
+    with m5:
+        st.markdown(f"""<div style="background:rgba(76,201,240,0.15); border-radius:8px; padding:1rem; text-align:center;">
+<div style="color:#4cc9f0; font-weight:600; font-size:0.85rem;">95th Percentile</div>
+<div style="color:#e0e0e0; font-size:1.8rem; font-weight:700;">{fmt_pct(result.irr_95th)}</div>
+<div style="color:#78909c; font-size:0.75rem;">Upside Case</div>
+</div>""", unsafe_allow_html=True)
 
     st.divider()
 
-    # IRR Distribution Histogram
-    st.subheader(f"{metric_label} Distribution")
+    # IRR Distribution Chart
+    st.markdown("##### C-Piece IRR Distribution")
+
+    st.markdown("""<div style="background:rgba(76,201,240,0.1); border:1px solid rgba(76,201,240,0.2); border-radius:8px; padding:0.8rem; margin-bottom:1rem; font-size:0.85rem;">
+<strong style="color:#4cc9f0;">How to Read This:</strong>
+<span style="color:#b0bec5;"> Each bar shows how many simulations resulted in that IRR range. Taller bars = more likely outcomes. The green line is the mean, red lines are 5th/95th percentiles.</span>
+</div>""", unsafe_allow_html=True)
 
     irr_data = get_irr_distribution(result)
 
     fig = create_histogram(
         values=irr_data["values"],
-        title=f"Monte Carlo {metric_label} Distribution",
-        x_title=metric_label,
+        title=f"{metric_label} Distribution ({params.get('num_sims', 1000):,} Simulations)",
+        x_title=f"{metric_label} (%)",
         bins=50,
         show_mean=True,
         show_percentiles=True,
@@ -409,143 +542,209 @@ if "mc_result" in st.session_state:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # Probability metrics
+    st.divider()
+
+    # Probability Analysis
+    st.markdown("##### Probability of Hitting Targets")
+
     prob_metrics = calculate_probability_metrics(result)
 
-    col1, col2, col3, col4 = st.columns(4)
+    prob_col1, prob_col2, prob_col3, prob_col4 = st.columns(4)
 
-    with col1:
-        fig = create_probability_gauge(
-            prob_metrics["prob_positive_irr"],
-            f"P({metric_label} > 0%)",
-            invert_colors=False,
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    # Helper to create probability card
+    def prob_card(prob, label, target, color):
+        prob_pct = prob * 100
+        bar_width = min(prob * 100, 100)
+        return f"""<div style="background:rgba(26,35,50,0.8); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:1rem;">
+<div style="color:#b0bec5; font-size:0.8rem; margin-bottom:0.3rem;">{label}</div>
+<div style="color:{color}; font-size:1.6rem; font-weight:700;">{prob_pct:.0f}%</div>
+<div style="background:rgba(255,255,255,0.1); border-radius:4px; height:8px; margin-top:0.5rem;">
+<div style="background:{color}; height:100%; width:{bar_width}%; border-radius:4px;"></div>
+</div>
+<div style="color:#78909c; font-size:0.7rem; margin-top:0.3rem;">chance of {metric_label} > {target}</div>
+</div>"""
 
-    with col2:
-        fig = create_probability_gauge(
-            prob_metrics["prob_irr_above_10"],
-            f"P({metric_label} > 10%)",
-            invert_colors=False,
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    with prob_col1:
+        st.markdown(prob_card(prob_metrics["prob_positive_irr"], "Break Even", "0%", "#06ffa5"), unsafe_allow_html=True)
 
-    with col3:
-        fig = create_probability_gauge(
-            prob_metrics["prob_irr_above_15"],
-            f"P({metric_label} > 15%)",
-            invert_colors=False,
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    with prob_col2:
+        st.markdown(prob_card(prob_metrics["prob_irr_above_10"], "Double Digits", "10%", "#4cc9f0"), unsafe_allow_html=True)
 
-    with col4:
-        fig = create_probability_gauge(
-            prob_metrics["prob_irr_above_20"],
-            f"P({metric_label} > 20%)",
-            invert_colors=False,
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    with prob_col3:
+        st.markdown(prob_card(prob_metrics["prob_irr_above_15"], "Strong Return", "15%", "#ffa15a"), unsafe_allow_html=True)
+
+    with prob_col4:
+        st.markdown(prob_card(prob_metrics["prob_irr_above_20"], "Exceptional", "20%", "#ef553b"), unsafe_allow_html=True)
 
     st.divider()
 
     # SOFR Path Fan Chart
-    st.subheader("SOFR Path Distribution")
+    st.markdown("##### Simulated SOFR Paths")
+
+    st.markdown("""<div style="background:rgba(76,201,240,0.1); border:1px solid rgba(76,201,240,0.2); border-radius:8px; padding:0.8rem; margin-bottom:1rem; font-size:0.85rem;">
+<strong style="color:#4cc9f0;">How to Read This:</strong>
+<span style="color:#b0bec5;"> The shaded area shows the range of SOFR paths across simulations. Darker = more likely. The line shows the median path. Current SOFR: {:.2%} → Long-run target: {:.2%}</span>
+</div>""".format(p['current_sofr'], params.get('long_run_mean', 0.04)), unsafe_allow_html=True)
 
     fan_data = get_sofr_fan_chart_data(result)
 
     fig = create_fan_chart(
         x=fan_data["months"],
         percentile_data=fan_data["percentiles"],
-        title="Simulated SOFR Paths (Vasicek Model)",
+        title="SOFR Rate Paths (Vasicek Model)",
         x_title="Month",
         y_title="SOFR Rate",
-        height=400,
+        height=350,
     )
     st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
 
-    # Summary Statistics Table
-    st.subheader("Detailed Statistics")
+    # Risk Metrics
+    st.markdown("##### Risk Metrics")
 
-    stats_data = [
-        {"Metric": "Number of Simulations", "Value": f"{result.config.num_simulations:,}"},
-        {"Metric": f"Mean {metric_label}", "Value": fmt_pct2(result.irr_mean)},
-        {"Metric": "Standard Deviation", "Value": fmt_pct2(result.irr_std)},
-        {"Metric": f"Median {metric_label}", "Value": fmt_pct2(result.irr_median)},
-        {"Metric": "5th Percentile", "Value": fmt_pct2(result.irr_5th)},
-        {"Metric": "25th Percentile", "Value": fmt_pct2(result.irr_25th)},
-        {"Metric": "75th Percentile", "Value": fmt_pct2(result.irr_75th)},
-        {"Metric": "95th Percentile", "Value": fmt_pct2(result.irr_95th)},
-        {"Metric": "Value at Risk (95%)", "Value": fmt_pct2(result.var_95)},
-        {"Metric": "Value at Risk (99%)", "Value": fmt_pct2(result.var_99)},
-        {"Metric": "Expected Shortfall (95%)", "Value": fmt_pct2(result.expected_shortfall_95)},
-    ]
+    risk_col1, risk_col2 = st.columns(2)
 
-    # Only show MOIC for Principal mode
-    if is_principal:
-        moic_str = f"{result.moic_mean:.2f}x" if not math.isinf(result.moic_mean) and not math.isnan(result.moic_mean) else "N/A"
-        stats_data.append({"Metric": "Mean MOIC", "Value": moic_str})
+    with risk_col1:
+        st.markdown("""<div style="background:rgba(239,85,59,0.1); border:1px solid rgba(239,85,59,0.2); border-radius:8px; padding:1rem;">
+<div style="color:#ef553b; font-weight:600; margin-bottom:0.8rem;">Value at Risk (VaR)</div>
+<div style="display:flex; justify-content:space-between; margin-bottom:0.5rem;">
+<span style="color:#b0bec5;">VaR (95%)</span>
+<span style="color:#e0e0e0; font-weight:600;">{}</span>
+</div>
+<div style="display:flex; justify-content:space-between; margin-bottom:0.5rem;">
+<span style="color:#b0bec5;">VaR (99%)</span>
+<span style="color:#e0e0e0; font-weight:600;">{}</span>
+</div>
+<div style="display:flex; justify-content:space-between; padding-top:0.5rem; border-top:1px solid rgba(239,85,59,0.3);">
+<span style="color:#b0bec5;">Expected Shortfall (95%)</span>
+<span style="color:#ef553b; font-weight:600;">{}</span>
+</div>
+<div style="color:#78909c; font-size:0.75rem; margin-top:0.5rem;">
+VaR = worst {} in X% of scenarios. ES = average {} in worst 5%.
+</div>
+</div>""".format(
+            fmt_pct(result.var_95),
+            fmt_pct(result.var_99),
+            fmt_pct(result.expected_shortfall_95),
+            metric_label,
+            metric_label,
+        ), unsafe_allow_html=True)
 
-    profit_str = f"${result.profit_mean:,.0f}" if not math.isinf(result.profit_mean) and not math.isnan(result.profit_mean) else "N/A"
-    stats_data.append({"Metric": "Mean Profit", "Value": profit_str})
+    with risk_col2:
+        # Additional stats
+        moic_display = f"{result.moic_mean:.2f}x" if is_principal and not (math.isinf(result.moic_mean) or math.isnan(result.moic_mean)) else "N/A"
+        profit_display = fmt_currency(result.profit_mean)
 
-    if result.default_rate > 0:
-        stats_data.extend([
-            {"Metric": "Simulated Default Rate", "Value": fmt_pct2(result.default_rate)},
-            {"Metric": "Loss Given Default", "Value": f"{result.loss_given_default:.0%}"},
-        ])
+        st.markdown(f"""<div style="background:rgba(6,255,165,0.1); border:1px solid rgba(6,255,165,0.2); border-radius:8px; padding:1rem;">
+<div style="color:#06ffa5; font-weight:600; margin-bottom:0.8rem;">Additional Metrics</div>
+<div style="display:flex; justify-content:space-between; margin-bottom:0.5rem;">
+<span style="color:#b0bec5;">Mean MOIC</span>
+<span style="color:#e0e0e0; font-weight:600;">{moic_display}</span>
+</div>
+<div style="display:flex; justify-content:space-between; margin-bottom:0.5rem;">
+<span style="color:#b0bec5;">Mean Profit</span>
+<span style="color:#e0e0e0; font-weight:600;">{profit_display}</span>
+</div>
+<div style="display:flex; justify-content:space-between; margin-bottom:0.5rem;">
+<span style="color:#b0bec5;">{metric_label} Range (5th-95th)</span>
+<span style="color:#e0e0e0; font-weight:600;">{(result.irr_95th - result.irr_5th)*10000:.0f} bps</span>
+</div>
+<div style="display:flex; justify-content:space-between; padding-top:0.5rem; border-top:1px solid rgba(6,255,165,0.3);">
+<span style="color:#b0bec5;">Simulations Run</span>
+<span style="color:#06ffa5; font-weight:600;">{result.config.num_simulations:,}</span>
+</div>
+</div>""", unsafe_allow_html=True)
 
-    st.dataframe(stats_data, use_container_width=True, hide_index=True)
+    st.divider()
 
-    # Key insights
+    # Key Insights
+    st.markdown("##### Key Insights")
+
+    # Determine insights based on results
+    insights = []
+
+    # IRR range insight
     irr_range_bps = (result.irr_95th - result.irr_5th) * 10000
-    st.markdown(f"""<div style="background:rgba(76,201,240,0.1); border:1px solid rgba(76,201,240,0.2); border-radius:8px; padding:1rem; margin:1rem 0;">
-    <strong style="color:#4cc9f0;">📈 Monte Carlo Insights</strong>
-    <ul style="color:#e0e0e0; margin:0.5rem 0 0 1rem; padding:0;">
-        <li>There is a <strong>{prob_metrics['prob_irr_above_15']*100:.0f}%</strong> probability of achieving {metric_label} > 15%</li>
-        <li><strong>95% VaR:</strong> In the worst 5% of scenarios, {metric_label} falls below <strong>{fmt_pct(result.var_95)}</strong></li>
-        <li>The {metric_label} range (5th-95th percentile) is <strong>{irr_range_bps:.0f} bps</strong></li>
-        <li>{'<strong style="color:#ff6b6b;">Default risk</strong> contributes to downside tail - consider credit enhancement' if result.default_rate > 0 else '<strong>Rate volatility</strong> is the primary risk driver'}</li>
-    </ul>
-    </div>""", unsafe_allow_html=True)
+    if irr_range_bps < 200:
+        insights.append(("Stable Returns", f"Tight {metric_label} range ({irr_range_bps:.0f} bps) suggests predictable outcomes", "#06ffa5"))
+    elif irr_range_bps < 400:
+        insights.append(("Moderate Uncertainty", f"{metric_label} range of {irr_range_bps:.0f} bps reflects typical rate risk", "#ffa15a"))
+    else:
+        insights.append(("High Uncertainty", f"Wide {metric_label} range ({irr_range_bps:.0f} bps) — significant rate exposure", "#ef553b"))
+
+    # Probability insight
+    if prob_metrics["prob_irr_above_15"] > 0.8:
+        insights.append(("Strong Upside", f"{prob_metrics['prob_irr_above_15']*100:.0f}% chance of >15% {metric_label} — excellent risk/reward", "#06ffa5"))
+    elif prob_metrics["prob_irr_above_10"] > 0.9:
+        insights.append(("Solid Base Case", f"{prob_metrics['prob_irr_above_10']*100:.0f}% chance of double-digit returns", "#4cc9f0"))
+    elif prob_metrics["prob_positive_irr"] < 0.95:
+        insights.append(("Loss Risk", f"Only {prob_metrics['prob_positive_irr']*100:.0f}% chance of positive {metric_label} — review structure", "#ef553b"))
+
+    # Default risk insight
+    if result.default_rate > 0:
+        insights.append(("Default Modeled", f"Simulation includes {result.default_rate:.1%} default rate — impacts downside tail", "#ffa15a"))
+
+    for insight_name, insight_desc, insight_color in insights:
+        st.markdown(f"""<div style="display:flex; align-items:center; margin-bottom:0.5rem; padding:0.8rem; background:rgba(255,255,255,0.02); border-radius:8px; border-left:3px solid {insight_color};">
+<div>
+<div style="color:{insight_color}; font-size:0.95rem; font-weight:600;">{insight_name}</div>
+<div style="color:#b0bec5; font-size:0.85rem;">{insight_desc}</div>
+</div>
+</div>""", unsafe_allow_html=True)
+
+    # Summary recommendation
+    if result.irr_mean > 0.12 and prob_metrics["prob_positive_irr"] > 0.95:
+        rec_color = "#06ffa5"
+        rec_text = "Strong risk-adjusted returns with high probability of positive outcome."
+    elif result.irr_mean > 0.08 and prob_metrics["prob_positive_irr"] > 0.90:
+        rec_color = "#4cc9f0"
+        rec_text = "Acceptable returns with manageable downside risk."
+    else:
+        rec_color = "#ffa15a"
+        rec_text = "Consider adjusting deal structure to improve risk/return profile."
+
+    st.markdown(f"""<div style="background:linear-gradient(135deg, rgba({int(rec_color[1:3], 16)}, {int(rec_color[3:5], 16)}, {int(rec_color[5:7], 16)}, 0.15), rgba(26,35,50,0.9)); border:1px solid {rec_color}; border-radius:8px; padding:1rem; margin-top:1rem;">
+<div style="color:{rec_color}; font-weight:600; margin-bottom:0.3rem;">Bottom Line</div>
+<div style="color:#e0e0e0;">{rec_text}</div>
+</div>""", unsafe_allow_html=True)
 
 else:
-    st.info("👆 Configure parameters above and click 'Run Monte Carlo Simulation' to generate probabilistic analysis")
+    # No results yet - show placeholder
+    st.markdown("""<div style="background:rgba(76,201,240,0.05); border:2px dashed rgba(76,201,240,0.3); border-radius:12px; padding:3rem; text-align:center; margin:2rem 0;">
+<div style="font-size:3rem; margin-bottom:1rem;">🎲</div>
+<div style="color:#4cc9f0; font-size:1.2rem; font-weight:600; margin-bottom:0.5rem;">Ready to Run Simulation</div>
+<div style="color:#b0bec5;">Configure parameters above and click "Run Simulation" to see probabilistic results</div>
+</div>""", unsafe_allow_html=True)
 
-    # Show example interpretation
-    st.markdown("""
-    ### How Monte Carlo Works
+    # Quick explanation
+    st.markdown("### What You'll Get")
 
-    The simulation models thousands of possible future outcomes:
+    col1, col2, col3 = st.columns(3)
 
-    | Step | What Happens |
-    |------|--------------|
-    | 1️⃣ | **Generate SOFR paths** - Simulate how rates might evolve using Vasicek model |
-    | 2️⃣ | **Calculate cashflows** - For each path, compute monthly interest, fees, principal |
-    | 3️⃣ | **Compute returns** - Calculate IRR/yield for each scenario |
-    | 4️⃣ | **Aggregate statistics** - Mean, median, percentiles, VaR |
+    with col1:
+        st.markdown("""<div style="background:rgba(6,255,165,0.1); border-radius:8px; padding:1rem; height:150px;">
+<div style="color:#06ffa5; font-weight:600; margin-bottom:0.5rem;">📊 Return Distribution</div>
+<div style="color:#b0bec5; font-size:0.85rem;">
+See the full range of possible IRRs — not just one "best guess" but the entire probability distribution.
+</div>
+</div>""", unsafe_allow_html=True)
 
-    ### Key Risk Metrics Explained
+    with col2:
+        st.markdown("""<div style="background:rgba(76,201,240,0.1); border-radius:8px; padding:1rem; height:150px;">
+<div style="color:#4cc9f0; font-weight:600; margin-bottom:0.5rem;">📈 SOFR Paths</div>
+<div style="color:#b0bec5; font-size:0.85rem;">
+Visualize how interest rates might evolve over your hold period using the Vasicek model.
+</div>
+</div>""", unsafe_allow_html=True)
 
-    | Metric | What It Means |
-    |--------|--------------|
-    | **Mean/Median IRR** | Expected return (median is more robust to outliers) |
-    | **Standard Deviation** | How much returns vary - higher = more uncertainty |
-    | **5th Percentile** | "Bad case" - 95% of outcomes are better than this |
-    | **95th Percentile** | "Good case" - only 5% of outcomes are better |
-    | **VaR (95%)** | Value at Risk - worst IRR in 95% of cases |
-    | **Expected Shortfall** | Average loss when things go really wrong (worst 5%) |
-
-    ### Floating vs Fixed Rate
-
-    - **Floating (SOFR + spread)**: Your return varies with interest rates
-      - ✅ Benefits if rates rise (higher interest income)
-      - ❌ Hurts if rates fall
-    - **Fixed Rate**: Locked return regardless of rate movements
-      - ✅ Predictable, easier to model
-      - ❌ May underperform if rates rise
-    """)
+    with col3:
+        st.markdown("""<div style="background:rgba(239,85,59,0.1); border-radius:8px; padding:1rem; height:150px;">
+<div style="color:#ef553b; font-weight:600; margin-bottom:0.5rem;">⚠️ Risk Metrics</div>
+<div style="color:#b0bec5; font-size:0.85rem;">
+Understand downside risk with VaR, Expected Shortfall, and probability of hitting return targets.
+</div>
+</div>""", unsafe_allow_html=True)
 
 st.divider()
 st.caption("HUD Financing Platform | Monte Carlo Simulation")

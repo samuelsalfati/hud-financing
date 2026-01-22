@@ -10,6 +10,7 @@ from .deal import (
     TrancheType,
     RateType,
     FeeStructure,
+    FundTerms,
     ExtensionTerms,
     DSCRInputs,
     PrepaymentSchedule,
@@ -20,7 +21,10 @@ from .deal import (
 # Cashflow generation
 from .cashflows import (
     generate_cashflows,
+    generate_fund_cashflows,
     CashflowResult,
+    FundCashflowResult,
+    AggregatorSummary,
     calculate_irr,
     calculate_moic,
 )
@@ -121,6 +125,7 @@ __all__ = [
     "TrancheType",
     "RateType",
     "FeeStructure",
+    "FundTerms",
     "ExtensionTerms",
     "DSCRInputs",
     "PrepaymentSchedule",
@@ -128,7 +133,10 @@ __all__ = [
     "create_default_deal",
     # Cashflows
     "generate_cashflows",
+    "generate_fund_cashflows",
     "CashflowResult",
+    "FundCashflowResult",
+    "AggregatorSummary",
     "calculate_irr",
     "calculate_moic",
     # Scenarios

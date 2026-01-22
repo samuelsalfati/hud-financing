@@ -2,9 +2,9 @@
 Scenario Engine for SNF Bridge Lending
 """
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
 from .deal import Deal
-from .cashflows import generate_cashflows, CashflowResult
+from .cashflows import generate_cashflows, generate_fund_cashflows, CashflowResult
 
 
 @dataclass
@@ -17,16 +17,40 @@ class Scenario:
 
 
 @dataclass
+class AggregatorEconomics:
+    """Aggregator economics for a scenario"""
+    fee_allocation: float
+    b_fund_aum: float
+    c_fund_aum: float
+    total_aum: float
+    b_fund_promote: float
+    c_fund_promote: float
+    total_promote: float
+    coinvest_returns: float
+    grand_total: float
+
+
+@dataclass
 class ScenarioResult:
     """Results from a scenario run"""
     scenario: Scenario
+    # Sponsor/Aggregator
     sponsor_irr: float
     sponsor_moic: float
     sponsor_profit: float
+    # Gross tranche returns
     a_irr: float
     b_irr: float
     c_irr: float
-    borrower_all_in_cost: float
+    # LP Net returns (after AUM and promote)
+    b_lp_irr: float = 0.0
+    b_lp_moic: float = 1.0
+    c_lp_irr: float = 0.0
+    c_lp_moic: float = 1.0
+    # Aggregator economics breakdown
+    aggregator: Optional[AggregatorEconomics] = None
+    # Borrower
+    borrower_all_in_cost: float = 0.0
 
 
 def get_standard_scenarios(deal: Deal) -> list[Scenario]:
@@ -105,6 +129,39 @@ def run_scenario(
         sponsor_is_principal=sponsor_is_principal,
     )
 
+    # Generate fund-level cashflows for LP returns and aggregator economics
+    fund_results = generate_fund_cashflows(
+        deal=deal,
+        sofr_curve=sofr_curve,
+        exit_month=scenario.exit_month,
+        has_extension=scenario.has_extension,
+    )
+
+    # Extract LP net returns
+    b_fund = fund_results.get('B_fund')
+    c_fund = fund_results.get('C_fund')
+    aggregator_summary = fund_results.get('aggregator')
+
+    b_lp_irr = b_fund.lp_cashflows.irr if b_fund else 0.0
+    b_lp_moic = b_fund.lp_cashflows.moic if b_fund else 1.0
+    c_lp_irr = c_fund.lp_cashflows.irr if c_fund else 0.0
+    c_lp_moic = c_fund.lp_cashflows.moic if c_fund else 1.0
+
+    # Build aggregator economics
+    agg_econ = None
+    if aggregator_summary:
+        agg_econ = AggregatorEconomics(
+            fee_allocation=aggregator_summary.aggregator_direct_fee_allocation,
+            b_fund_aum=aggregator_summary.b_fund_aum_fees,
+            c_fund_aum=aggregator_summary.c_fund_aum_fees,
+            total_aum=aggregator_summary.total_aum_fees,
+            b_fund_promote=aggregator_summary.b_fund_promote,
+            c_fund_promote=aggregator_summary.c_fund_promote,
+            total_promote=aggregator_summary.total_promote,
+            coinvest_returns=aggregator_summary.c_fund_coinvest_returns,
+            grand_total=aggregator_summary.grand_total,
+        )
+
     # Calculate borrower all-in cost
     borrower = results['borrower']
     total_paid = abs(sum(f for f in borrower.total_flows if f < 0))
@@ -121,6 +178,11 @@ def run_scenario(
         a_irr=results.get('A', CashflowResult([], [], [], [], [], 0, 0, 0)).irr,
         b_irr=results.get('B', CashflowResult([], [], [], [], [], 0, 0, 0)).irr,
         c_irr=results.get('C', CashflowResult([], [], [], [], [], 0, 0, 0)).irr,
+        b_lp_irr=b_lp_irr,
+        b_lp_moic=b_lp_moic,
+        c_lp_irr=c_lp_irr,
+        c_lp_moic=c_lp_moic,
+        aggregator=agg_econ,
         borrower_all_in_cost=all_in_cost,
     )
 
