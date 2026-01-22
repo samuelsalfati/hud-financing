@@ -853,13 +853,14 @@ b_gross_irr = b_result.irr if b_result else 0
 b_lp_irr = b_fund.lp_cashflows.irr if b_fund else 0
 c_gross_irr = c_result.irr if c_result else 0
 c_lp_irr = c_fund.lp_cashflows.irr if c_fund else 0
-coinvest_irr = aggregator_summary.coinvest_irr if aggregator_summary else 0
+# Full aggregator IRR (co-invest + fees + AUM + promote + spread)
+agg_irr = sponsor.irr if sponsor else 0
 
 # MOIC values
 a_moic = a_result.moic if a_result else 1
 b_lp_moic = b_fund.lp_cashflows.moic if b_fund else 1
 c_lp_moic = c_fund.lp_cashflows.moic if c_fund else 1
-coinvest_moic = aggregator_summary.coinvest_moic if aggregator_summary else 1
+agg_moic = sponsor.moic if sponsor else 1
 
 # Dashboard-style IRR Gauges
 st.markdown("#### IRR Dashboard")
@@ -878,7 +879,7 @@ with g3:
     st.plotly_chart(fig, use_container_width=True, key="gauge_c")
 
 with g4:
-    fig = create_irr_gauge(coinvest_irr, "Agg Co-Invest", max_val=0.30, thresholds=(0.10, 0.15, 0.20))
+    fig = create_irr_gauge(agg_irr, "Aggregator", max_val=1.0, thresholds=(0.20, 0.40, 0.60))
     st.plotly_chart(fig, use_container_width=True, key="gauge_agg")
 
 # MOIC Gauges
@@ -898,7 +899,7 @@ with m3:
     st.plotly_chart(fig, use_container_width=True, key="moic_c")
 
 with m4:
-    fig = create_moic_gauge(coinvest_moic, "Agg Co-Invest", max_val=2.0)
+    fig = create_moic_gauge(agg_moic, "Aggregator", max_val=5.0)
     st.plotly_chart(fig, use_container_width=True, key="moic_agg")
 
 # Compact summary cards below gauges
@@ -928,9 +929,9 @@ with r3:
 
 with r4:
     st.markdown(f"""<div style="background:rgba(6,255,165,0.1); border-radius:8px; padding:0.8rem; text-align:center; border-left:3px solid #06ffa5;">
-<div style="color:#06ffa5; font-weight:600; font-size:0.85rem;">Agg Co-Invest</div>
-<div style="color:#e0e0e0; font-size:1.4rem; font-weight:700;">{safe_pct(coinvest_irr)}</div>
-<div style="color:#78909c; font-size:0.7rem;">IRR | {safe_moic(coinvest_moic)} MOIC</div>
+<div style="color:#06ffa5; font-weight:600; font-size:0.85rem;">Aggregator</div>
+<div style="color:#e0e0e0; font-size:1.4rem; font-weight:700;">{safe_pct(agg_irr)}</div>
+<div style="color:#78909c; font-size:0.7rem;">IRR | {safe_moic(agg_moic)} MOIC</div>
 </div>""", unsafe_allow_html=True)
 
 st.markdown("---")

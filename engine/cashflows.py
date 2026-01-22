@@ -223,89 +223,121 @@ def _calc_sponsor_flows(
     is_principal: bool = True,
 ) -> CashflowResult:
     """
-    Calculate sponsor economics:
-    - If Principal: C-piece returns + fees + spread
-    - If Aggregator: fees + spread only (no capital invested)
+    Calculate aggregator/sponsor economics:
+    - Co-invest in C-piece (only their %, not full C-piece)
+    - Fee allocation (their share of origination/exit fees)
+    - AUM fees from B and C funds
+    - Promote from B and C funds at exit
+    - Spread income (borrower rate - cost of capital)
     """
     months = list(range(exit_month + 1))
 
-    # Find C-piece tranche (use .value comparison for robustness with Streamlit module reloading)
+    # Find tranches
     c_tranche = None
+    b_tranche = None
     for t in deal.tranches:
         if t.tranche_type.value == "C":
             c_tranche = t
-            break
+        elif t.tranche_type.value == "B":
+            b_tranche = t
 
-    # Only include C-piece if sponsor is principal
-    c_amount = deal.get_tranche_amount(c_tranche) if (c_tranche and is_principal) else 0
+    # Aggregator only invests their CO-INVEST portion of C-piece (not the full C-piece)
+    full_c_amount = deal.get_tranche_amount(c_tranche) if c_tranche else 0
+    coinvest_pct = deal.aggregator_coinvest_pct if is_principal else 0
+    coinvest_amount = full_c_amount * coinvest_pct
+
+    # LP capital in each fund (for AUM fee calculation)
+    c_lp_capital = full_c_amount * (1 - coinvest_pct)
+    b_amount = deal.get_tranche_amount(b_tranche) if b_tranche else 0
+
+    # Aggregator's fee allocation percentage
+    agg_fee_alloc = deal.get_aggregator_fee_allocation()
 
     principal_flows = []
     interest_flows = []
     fee_flows = []
 
+    # Track cumulative returns for promote calculation
+    b_cumulative_return = 0
+    c_cumulative_return = 0
+
     for m in months:
         if m == 0:
-            # Principal mode: fund C-piece. Aggregator mode: no investment.
-            # Both receive origination fee
-            principal_flows.append(-c_amount)
+            # Invest co-invest portion only
+            principal_flows.append(-coinvest_amount)
             interest_flows.append(0)
-            fee_flows.append(deal.fees.calculate_origination(deal.loan_amount))
+            # Aggregator's share of origination fee
+            orig_fee = deal.fees.calculate_origination(deal.loan_amount) * agg_fee_alloc
+            fee_flows.append(orig_fee)
+
         elif m == exit_month:
             sofr = sofr_curve[m]
 
-            # C-piece interest (only if principal)
-            c_interest = c_amount * (c_tranche.get_rate(sofr) if c_tranche else 0) / 12 if is_principal else 0
+            # 1. Co-invest interest (aggregator's share of C-piece interest, fee-free)
+            coinvest_interest = coinvest_amount * (c_tranche.get_rate(sofr) if c_tranche else 0) / 12
 
-            # Spread income: borrower pays - (A + B + C cost)
-            # In aggregator mode, C-piece cost goes to C investor, not us
+            # 2. Spread income: borrower pays - all tranche costs
             borrower_interest = deal.loan_amount * deal.get_borrower_rate(sofr) / 12
+            tranche_cost = sum(
+                deal.get_tranche_amount(t) * t.get_rate(sofr) / 12
+                for t in deal.tranches
+            )
+            spread_income = borrower_interest - tranche_cost
 
-            # Cost to pay all tranches (A, B, and C if aggregator)
-            if is_principal:
-                # We keep C, so only pay A + B
-                tranche_cost = sum(
-                    deal.get_tranche_amount(t) * t.get_rate(sofr) / 12
-                    for t in deal.tranches if t.tranche_type.value != "C"
-                )
-                spread_income = borrower_interest - tranche_cost - c_interest
-            else:
-                # Aggregator: pay all tranches including C investor
-                tranche_cost = sum(
-                    deal.get_tranche_amount(t) * t.get_rate(sofr) / 12
-                    for t in deal.tranches
-                )
-                spread_income = borrower_interest - tranche_cost
+            # 3. Monthly AUM fees (last month)
+            b_aum = deal.b_fund_terms.calculate_monthly_aum_fee(b_amount)
+            c_aum = deal.c_fund_terms.calculate_monthly_aum_fee(c_lp_capital)
+            monthly_aum = b_aum + c_aum
 
-            principal_flows.append(c_amount)  # Get C back if principal, 0 if aggregator
-            interest_flows.append(c_interest + spread_income)
+            # 4. Calculate promote at exit
+            # B-Fund promote
+            b_total_return = b_amount + b_cumulative_return + (b_amount * (b_tranche.get_rate(sofr) if b_tranche else 0) / 12)
+            b_promote = deal.b_fund_terms.calculate_promote(b_amount, b_total_return, exit_month)
 
-            exit_fee = deal.fees.calculate_exit(deal.loan_amount)
-            ext_fee = deal.fees.calculate_extension(deal.loan_amount) if has_extension else 0
-            fee_flows.append(exit_fee + ext_fee)
+            # C-Fund promote (on LP capital only, not co-invest)
+            c_lp_interest = c_lp_capital * (c_tranche.get_rate(sofr) if c_tranche else 0) / 12
+            c_total_return = c_lp_capital + c_cumulative_return + c_lp_interest
+            c_promote = deal.c_fund_terms.calculate_promote(c_lp_capital, c_total_return, exit_month)
+
+            total_promote = b_promote + c_promote
+
+            # 5. Exit fee allocation
+            exit_fee = deal.fees.calculate_exit(deal.loan_amount) * agg_fee_alloc
+            ext_fee = (deal.fees.calculate_extension(deal.loan_amount) * agg_fee_alloc) if has_extension else 0
+
+            principal_flows.append(coinvest_amount)  # Get co-invest back
+            interest_flows.append(coinvest_interest + spread_income)
+            fee_flows.append(monthly_aum + total_promote + exit_fee + ext_fee)
+
         else:
-            # Monthly: C interest (if principal) + spread + mgmt fees
+            # Monthly flows
             sofr = sofr_curve[m]
 
-            c_interest = c_amount * (c_tranche.get_rate(sofr) if c_tranche else 0) / 12 if is_principal else 0
+            # Co-invest interest
+            coinvest_interest = coinvest_amount * (c_tranche.get_rate(sofr) if c_tranche else 0) / 12
 
+            # Spread income
             borrower_interest = deal.loan_amount * deal.get_borrower_rate(sofr) / 12
+            tranche_cost = sum(
+                deal.get_tranche_amount(t) * t.get_rate(sofr) / 12
+                for t in deal.tranches
+            )
+            spread_income = borrower_interest - tranche_cost
 
-            if is_principal:
-                tranche_cost = sum(
-                    deal.get_tranche_amount(t) * t.get_rate(sofr) / 12
-                    for t in deal.tranches if t.tranche_type.value != "C"
-                )
-                spread_income = borrower_interest - tranche_cost - c_interest
-            else:
-                tranche_cost = sum(
-                    deal.get_tranche_amount(t) * t.get_rate(sofr) / 12
-                    for t in deal.tranches
-                )
-                spread_income = borrower_interest - tranche_cost
+            # Monthly AUM fees
+            b_aum = deal.b_fund_terms.calculate_monthly_aum_fee(b_amount)
+            c_aum = deal.c_fund_terms.calculate_monthly_aum_fee(c_lp_capital)
+            monthly_aum = b_aum + c_aum
+
+            # Track cumulative returns for promote calc
+            if b_tranche and b_tranche.is_current_pay:
+                b_cumulative_return += b_amount * b_tranche.get_rate(sofr) / 12
+            if c_tranche and c_tranche.is_current_pay:
+                c_cumulative_return += c_lp_capital * c_tranche.get_rate(sofr) / 12
 
             principal_flows.append(0)
-            interest_flows.append(c_interest + spread_income)
-            fee_flows.append(deal.fees.calculate_monthly_mgmt(deal.loan_amount))
+            interest_flows.append(coinvest_interest + spread_income)
+            fee_flows.append(monthly_aum + deal.fees.calculate_monthly_mgmt(deal.loan_amount))
 
     total_flows = [p + i + f for p, i, f in zip(principal_flows, interest_flows, fee_flows)]
 
@@ -313,11 +345,9 @@ def _calc_sponsor_flows(
     total_invested = abs(total_flows[0]) if total_flows[0] < 0 else 0
     total_returned = sum(f for f in total_flows if f > 0)
 
-    # For aggregator mode with no investment, calculate ROI differently
     if total_invested > 0:
         moic = total_returned / total_invested
     else:
-        # No investment - MOIC is infinite, show total profit instead
         moic = float('inf')
 
     profit = sum(total_flows)
