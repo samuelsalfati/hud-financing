@@ -47,18 +47,12 @@ def create_irr_gauge(
         bar_color = ERROR_RED
 
     fig = go.Figure(go.Indicator(
-        mode="gauge+number+delta",
+        mode="gauge+number",
         value=irr * 100,  # Convert to percentage
         number={
             "suffix": "%",
-            "font": {"size": 36, "color": TEXT_PRIMARY}
-        },
-        delta={
-            "reference": thresholds[1] * 100,
+            "font": {"size": 36, "color": TEXT_PRIMARY},
             "valueformat": ".1f",
-            "suffix": "%",
-            "increasing": {"color": SUCCESS_GREEN},
-            "decreasing": {"color": ERROR_RED},
         },
         title={
             "text": title,

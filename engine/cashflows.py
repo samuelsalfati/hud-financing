@@ -261,14 +261,39 @@ def _calc_sponsor_flows(
     b_cumulative_return = 0
     c_cumulative_return = 0
 
+    # Pre-calculate origination fee (received at close but we'll add to Month 1 for IRR clarity)
+    orig_fee = deal.fees.calculate_origination(deal.loan_amount) * agg_fee_alloc
+
     for m in months:
         if m == 0:
-            # Invest co-invest portion only
+            # Invest co-invest portion only (no fee offset - keeps IRR meaningful)
             principal_flows.append(-coinvest_amount)
             interest_flows.append(0)
-            # Aggregator's share of origination fee
-            orig_fee = deal.fees.calculate_origination(deal.loan_amount) * agg_fee_alloc
-            fee_flows.append(orig_fee)
+            fee_flows.append(0)
+
+        elif m == 1:
+            # First month: include origination fee + regular monthly income
+            sofr = sofr_curve[m]
+            coinvest_interest = coinvest_amount * (c_tranche.get_rate(sofr) if c_tranche else 0) / 12
+            borrower_interest = deal.loan_amount * deal.get_borrower_rate(sofr) / 12
+            tranche_cost = sum(
+                deal.get_tranche_amount(t) * t.get_rate(sofr) / 12
+                for t in deal.tranches
+            )
+            spread_income = borrower_interest - tranche_cost
+            b_aum = deal.b_fund_terms.calculate_monthly_aum_fee(b_amount)
+            c_aum = deal.c_fund_terms.calculate_monthly_aum_fee(c_lp_capital)
+            monthly_aum = b_aum + c_aum
+
+            if b_tranche and b_tranche.is_current_pay:
+                b_cumulative_return += b_amount * b_tranche.get_rate(sofr) / 12
+            if c_tranche and c_tranche.is_current_pay:
+                c_cumulative_return += c_lp_capital * c_tranche.get_rate(sofr) / 12
+
+            principal_flows.append(0)
+            interest_flows.append(coinvest_interest + spread_income)
+            # Add origination fee to first month
+            fee_flows.append(orig_fee + monthly_aum + deal.fees.calculate_monthly_mgmt(deal.loan_amount))
 
         elif m == exit_month:
             sofr = sofr_curve[m]

@@ -828,20 +828,47 @@ st.markdown("---")
 
 st.markdown("### Returns Analysis")
 
-# Calculated Aggregator Economics
+# Calculated Aggregator Economics - Full Breakdown
 if aggregator_summary:
-    st.markdown(f"""<div style="background:linear-gradient(135deg, rgba(6,255,165,0.15), rgba(76,201,240,0.1)); border:2px solid rgba(6,255,165,0.4); border-radius:10px; padding:1rem; margin-bottom:1rem;">
-<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
-<div>
-<div style="color:#06ffa5; font-weight:600;">Aggregator Total Income ({hud_month}mo hold)</div>
-<div style="color:#78909c; font-size:0.8rem;">Fee Allocation + AUM Fees + Promote + Co-Invest Returns</div>
+    # Calculate totals for display
+    total_fees = aggregator_summary.aggregator_direct_fee_allocation
+    total_aum = aggregator_summary.total_aum_fees
+    total_promote = aggregator_summary.total_promote
+    coinvest_profit = aggregator_summary.coinvest_irr * agg_coinvest_amt if aggregator_summary.coinvest_irr else 0
+
+    st.markdown(f"""<div style="background:linear-gradient(135deg, rgba(6,255,165,0.15), rgba(76,201,240,0.1)); border:2px solid rgba(6,255,165,0.4); border-radius:10px; padding:1.2rem; margin-bottom:1rem;">
+<div style="color:#06ffa5; font-weight:600; font-size:1.1rem; margin-bottom:1rem;">Aggregator Economics ({hud_month}mo hold)</div>
+
+<div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:1rem; margin-bottom:1rem;">
+<div style="background:rgba(0,0,0,0.2); border-radius:8px; padding:0.8rem; text-align:center;">
+<div style="color:#78909c; font-size:0.75rem;">Fee Allocation</div>
+<div style="color:#e0e0e0; font-size:1.2rem; font-weight:600;">${total_fees:,.0f}</div>
 </div>
+<div style="background:rgba(0,0,0,0.2); border-radius:8px; padding:0.8rem; text-align:center;">
+<div style="color:#78909c; font-size:0.75rem;">AUM Fees ({hud_month}mo)</div>
+<div style="color:#e0e0e0; font-size:1.2rem; font-weight:600;">${total_aum:,.0f}</div>
+</div>
+<div style="background:rgba(0,0,0,0.2); border-radius:8px; padding:0.8rem; text-align:center;">
+<div style="color:#78909c; font-size:0.75rem;">Promote (Carry)</div>
+<div style="color:#e0e0e0; font-size:1.2rem; font-weight:600;">${total_promote:,.0f}</div>
+<div style="color:#78909c; font-size:0.65rem;">B: ${aggregator_summary.b_fund_promote:,.0f} | C: ${aggregator_summary.c_fund_promote:,.0f}</div>
+</div>
+<div style="background:rgba(0,0,0,0.2); border-radius:8px; padding:0.8rem; text-align:center;">
+<div style="color:#78909c; font-size:0.75rem;">Co-Invest Returns</div>
+<div style="color:#e0e0e0; font-size:1.2rem; font-weight:600;">${aggregator_summary.c_fund_coinvest_returns:,.0f}</div>
+<div style="color:#78909c; font-size:0.65rem;">on ${agg_coinvest_amt:,.0f}</div>
+</div>
+</div>
+
+<div style="display:flex; justify-content:space-between; align-items:center; padding-top:0.8rem; border-top:2px solid rgba(6,255,165,0.3);">
+<div style="color:#06ffa5; font-weight:600;">Grand Total</div>
 <div style="color:#06ffa5; font-size:1.8rem; font-weight:700;">${aggregator_summary.grand_total:,.0f}</div>
 </div>
 </div>""", unsafe_allow_html=True)
 
 # Get results for gauges
-a_result = results.get("A")
+# Use fund_results for A-piece to include fee allocation
+a_result = fund_results.get("A")  # Includes fee allocation
 b_result = results.get("B")
 c_result = results.get("C")
 b_fund = fund_results.get('B_fund')
@@ -879,8 +906,15 @@ with g3:
     st.plotly_chart(fig, use_container_width=True, key="gauge_c")
 
 with g4:
-    fig = create_irr_gauge(agg_irr, "Aggregator", max_val=1.0, thresholds=(0.20, 0.40, 0.60))
-    st.plotly_chart(fig, use_container_width=True, key="gauge_agg")
+    # Aggregator IRR can be very high - show as number with info tooltip
+    agg_irr_display = f"{agg_irr:.0%}" if agg_irr < 10 else f"{agg_irr*100:,.0f}%"
+    st.markdown(f"""<div style="background:rgba(6,255,165,0.1); border-radius:8px; padding:1rem; text-align:center; height:220px; display:flex; flex-direction:column; justify-content:center;">
+<div style="color:#78909c; font-size:0.85rem; margin-bottom:0.3rem;">Aggregator IRR
+<span title="Aggregator IRR = (Co-invest returns + Fee income + AUM fees + Promote) / Co-invest amount. High IRR reflects fee leverage on minimal capital at risk." style="cursor:help; color:#4cc9f0; font-size:0.7rem; margin-left:0.3rem;">ⓘ</span>
+</div>
+<div style="color:#06ffa5; font-size:2.5rem; font-weight:700;">{agg_irr_display}</div>
+<div style="color:#78909c; font-size:0.75rem; margin-top:0.5rem;">on ${agg_coinvest_amt:,.0f} co-invest</div>
+</div>""", unsafe_allow_html=True)
 
 # MOIC Gauges
 st.markdown("#### MOIC Dashboard")
@@ -899,8 +933,13 @@ with m3:
     st.plotly_chart(fig, use_container_width=True, key="moic_c")
 
 with m4:
-    fig = create_moic_gauge(agg_moic, "Aggregator", max_val=5.0)
-    st.plotly_chart(fig, use_container_width=True, key="moic_agg")
+    # Aggregator MOIC with profit
+    agg_profit = sponsor.total_profit if sponsor else 0
+    st.markdown(f"""<div style="background:rgba(6,255,165,0.1); border-radius:8px; padding:1rem; text-align:center; height:220px; display:flex; flex-direction:column; justify-content:center;">
+<div style="color:#78909c; font-size:0.85rem; margin-bottom:0.3rem;">Aggregator MOIC</div>
+<div style="color:#06ffa5; font-size:2.5rem; font-weight:700;">{agg_moic:.2f}x</div>
+<div style="color:#78909c; font-size:0.75rem; margin-top:0.5rem;">Profit: ${agg_profit:,.0f}</div>
+</div>""", unsafe_allow_html=True)
 
 # Compact summary cards below gauges
 st.markdown("#### Quick Summary")
@@ -928,10 +967,12 @@ with r3:
 </div>""", unsafe_allow_html=True)
 
 with r4:
+    agg_irr_short = f"{agg_irr:.0%}" if agg_irr < 10 else f"{agg_irr*100:,.0f}%"
+    agg_profit = sponsor.total_profit if sponsor else 0
     st.markdown(f"""<div style="background:rgba(6,255,165,0.1); border-radius:8px; padding:0.8rem; text-align:center; border-left:3px solid #06ffa5;">
-<div style="color:#06ffa5; font-weight:600; font-size:0.85rem;">Aggregator</div>
-<div style="color:#e0e0e0; font-size:1.4rem; font-weight:700;">{safe_pct(agg_irr)}</div>
-<div style="color:#78909c; font-size:0.7rem;">IRR | {safe_moic(agg_moic)} MOIC</div>
+<div style="color:#06ffa5; font-weight:600; font-size:0.85rem;">Aggregator <span title="IRR on co-invest capital. High due to fee income leverage." style="cursor:help; font-size:0.7rem;">ⓘ</span></div>
+<div style="color:#e0e0e0; font-size:1.4rem; font-weight:700;">{agg_irr_short}</div>
+<div style="color:#78909c; font-size:0.7rem;">{agg_moic:.1f}x MOIC | ${agg_profit:,.0f}</div>
 </div>""", unsafe_allow_html=True)
 
 st.markdown("---")
