@@ -176,51 +176,63 @@ if cf_data:
 
     st.divider()
 
-    # Detailed cashflow table
-    st.subheader("Monthly Cashflow Detail")
-
-    # Build base dataframe
-    df = pd.DataFrame({
-        "Month": cf_data.months,
-        "Principal": cf_data.principal_flows,
-        "Interest": cf_data.interest_flows,
-        "Fees": cf_data.fee_flows,
-        "Net Cashflow": cf_data.total_flows,
-        "Cumulative": cumulative,
-    })
-
-    # Format currency columns
-    currency_cols = ["Principal", "Interest", "Fees", "Net Cashflow", "Cumulative"]
-    styled_df = df.copy()
-    for col in currency_cols:
-        styled_df[col] = styled_df[col].apply(lambda x: f"${x:,.0f}")
-
-    st.dataframe(styled_df, use_container_width=True, hide_index=True, height=400)
-
-    # Download button
-    csv = df.to_csv(index=False)
-    st.download_button(
-        label="Download Cashflows (CSV)",
-        data=csv,
-        file_name=f"{selected_view.lower()}_cashflows.csv",
-        mime="text/csv",
-    )
+    # Detailed cashflow table - collapsed for Aggregator (has full breakdown below)
+    if selected_view == "Aggregator":
+        with st.expander("📋 Basic Cashflow Table (Principal/Interest/Fees)", expanded=False):
+            df = pd.DataFrame({
+                "Month": cf_data.months,
+                "Principal": cf_data.principal_flows,
+                "Interest": cf_data.interest_flows,
+                "Fees": cf_data.fee_flows,
+                "Net Cashflow": cf_data.total_flows,
+                "Cumulative": cumulative,
+            })
+            currency_cols = ["Principal", "Interest", "Fees", "Net Cashflow", "Cumulative"]
+            styled_df = df.copy()
+            for col in currency_cols:
+                styled_df[col] = styled_df[col].apply(lambda x: f"${x:,.0f}")
+            st.dataframe(styled_df, use_container_width=True, hide_index=True, height=400)
+            csv = df.to_csv(index=False)
+            st.download_button(
+                label="Download Cashflows (CSV)",
+                data=csv,
+                file_name=f"{selected_view.lower()}_cashflows.csv",
+                mime="text/csv",
+            )
+    else:
+        st.subheader("Monthly Cashflow Detail")
+        df = pd.DataFrame({
+            "Month": cf_data.months,
+            "Principal": cf_data.principal_flows,
+            "Interest": cf_data.interest_flows,
+            "Fees": cf_data.fee_flows,
+            "Net Cashflow": cf_data.total_flows,
+            "Cumulative": cumulative,
+        })
+        currency_cols = ["Principal", "Interest", "Fees", "Net Cashflow", "Cumulative"]
+        styled_df = df.copy()
+        for col in currency_cols:
+            styled_df[col] = styled_df[col].apply(lambda x: f"${x:,.0f}")
+        st.dataframe(styled_df, use_container_width=True, hide_index=True, height=400)
+        csv = df.to_csv(index=False)
+        st.download_button(
+            label="Download Cashflows (CSV)",
+            data=csv,
+            file_name=f"{selected_view.lower()}_cashflows.csv",
+            mime="text/csv",
+        )
 
     st.divider()
 
     # =============================================================================
     # FUND ECONOMICS CASHFLOW - Shows AUM fees and promote timing
     # =============================================================================
-    if selected_view in ["B-Fund LP Net", "C-Fund LP Net", "Aggregator"]:
+    if selected_view in ["B-Fund LP Net", "C-Fund LP Net"]:
         st.subheader("Fund Economics Breakdown")
 
         st.markdown("""<div style="background:rgba(76,201,240,0.1); border:1px solid rgba(76,201,240,0.2); border-radius:8px; padding:0.8rem 1rem; margin-bottom:1rem; font-size:0.85rem; color:#b0bec5;">
 <strong style="color:#4cc9f0;">Fund Economics:</strong> AUM fees are deducted monthly from LP capital. Promote (carry) is calculated and deducted at exit when returns exceed the hurdle rate.
 </div>""", unsafe_allow_html=True)
-
-        # Get fund data
-        b_fund = fund_results.get('B_fund') if fund_results else None
-        c_fund = fund_results.get('C_fund') if fund_results else None
 
         # Calculate monthly AUM and promote
         hold_months = p['hud_month']
@@ -235,7 +247,7 @@ if cf_data:
         b_promote = aggregator_summary.b_fund_promote if aggregator_summary else 0
         c_promote = aggregator_summary.c_fund_promote if aggregator_summary else 0
 
-        # Build economics table
+        # Build economics table for LP views
         econ_rows = []
         for month in range(hold_months + 1):
             row = {"Month": month}
@@ -248,12 +260,6 @@ if cf_data:
                 row["AUM Fee (Out)"] = -c_aum_monthly if month > 0 and month <= hold_months else 0
                 row["Promote (Out)"] = -c_promote if month == hold_months else 0
                 row["Total Deductions"] = row["AUM Fee (Out)"] + row["Promote (Out)"]
-            elif selected_view == "Aggregator":
-                row["B-Fund AUM (In)"] = b_aum_monthly if month > 0 and month <= hold_months else 0
-                row["C-Fund AUM (In)"] = c_aum_monthly if month > 0 and month <= hold_months else 0
-                row["B Promote (In)"] = b_promote if month == hold_months else 0
-                row["C Promote (In)"] = c_promote if month == hold_months else 0
-                row["Total Income"] = row["B-Fund AUM (In)"] + row["C-Fund AUM (In)"] + row["B Promote (In)"] + row["C Promote (In)"]
 
             econ_rows.append(row)
 
@@ -267,44 +273,163 @@ if cf_data:
 
         st.dataframe(styled_econ, use_container_width=True, hide_index=True, height=300)
 
-        # Summary metrics
-        if selected_view == "Aggregator":
-            st.markdown("##### Aggregator Income Totals")
-            inc1, inc2, inc3, inc4, inc5 = st.columns(5)
-            total_b_aum = b_aum_monthly * hold_months
-            total_c_aum = c_aum_monthly * hold_months
-            fee_income = aggregator_summary.aggregator_direct_fee_allocation if aggregator_summary else 0
-            coinvest_returns = aggregator_summary.c_fund_coinvest_returns if aggregator_summary else 0
-
-            with inc1:
-                st.metric("Fee Allocation", f"${fee_income:,.0f}", help="Share of origination/exit fees")
-            with inc2:
-                st.metric("B-Fund AUM", f"${total_b_aum:,.0f}", help=f"{hold_months} months × ${b_aum_monthly:,.0f}")
-            with inc3:
-                st.metric("C-Fund AUM", f"${total_c_aum:,.0f}", help=f"{hold_months} months × ${c_aum_monthly:,.0f}")
-            with inc4:
-                st.metric("Total Promote", f"${b_promote + c_promote:,.0f}", help="B + C fund promote")
-            with inc5:
-                st.metric("Co-Invest Returns", f"${coinvest_returns:,.0f}", help="Returns on fee-free co-invest")
+        # LP view - show what's being deducted
+        st.markdown("##### LP Fee Impact")
+        if selected_view == "B-Fund LP Net":
+            total_aum = b_aum_monthly * hold_months
+            promote = b_promote
+            fund_name = "B-Fund"
         else:
-            # LP view - show what's being deducted
-            st.markdown("##### LP Fee Impact")
-            if selected_view == "B-Fund LP Net":
-                total_aum = b_aum_monthly * hold_months
-                promote = b_promote
-                fund_name = "B-Fund"
-            else:
-                total_aum = c_aum_monthly * hold_months
-                promote = c_promote
-                fund_name = "C-Fund"
+            total_aum = c_aum_monthly * hold_months
+            promote = c_promote
+            fund_name = "C-Fund"
 
-            lp1, lp2, lp3 = st.columns(3)
-            with lp1:
-                st.metric(f"Total AUM Fees", f"(${total_aum:,.0f})", help=f"{hold_months} months of management fees")
-            with lp2:
-                st.metric(f"Promote/Carry", f"(${promote:,.0f})", help="GP share of profits above hurdle")
-            with lp3:
-                st.metric(f"Total Deductions", f"(${total_aum + promote:,.0f})", delta=f"-{((total_aum + promote) / (b_amt if 'B' in fund_name else c_lp_capital)) * 100:.1f}% of capital")
+        lp1, lp2, lp3 = st.columns(3)
+        with lp1:
+            st.metric(f"Total AUM Fees", f"(${total_aum:,.0f})", help=f"{hold_months} months of management fees")
+        with lp2:
+            st.metric(f"Promote/Carry", f"(${promote:,.0f})", help="GP share of profits above hurdle")
+        with lp3:
+            st.metric(f"Total Deductions", f"(${total_aum + promote:,.0f})", delta=f"-{((total_aum + promote) / (b_amt if 'B' in fund_name else c_lp_capital)) * 100:.1f}% of capital")
+
+        st.divider()
+
+    # =============================================================================
+    # AGGREGATOR COMPREHENSIVE MONTHLY TABLE
+    # =============================================================================
+    if selected_view == "Aggregator":
+        st.subheader("Aggregator Monthly Income Breakdown")
+
+        st.markdown("""<div style="background:rgba(6,255,165,0.1); border:1px solid rgba(6,255,165,0.2); border-radius:8px; padding:0.8rem 1rem; margin-bottom:1rem; font-size:0.85rem; color:#b0bec5;">
+<strong style="color:#06ffa5;">Complete Aggregator Economics:</strong> This table shows ALL income sources by month - Co-invest cash flows, Fee allocation, AUM fees from both funds, and Promote at exit.
+</div>""", unsafe_allow_html=True)
+
+        hold_months = p['hud_month']
+        b_amt = p['loan_amount'] * p['b_pct']
+        c_amt = p['loan_amount'] * p['c_pct']
+        agg_coinvest = p.get('agg_coinvest', 0)
+        coinvest_amt = c_amt * agg_coinvest
+        c_lp_capital = c_amt * (1 - agg_coinvest)
+
+        # Monthly AUM fees
+        b_aum_monthly = b_amt * p.get('b_aum_fee', 0.015) / 12
+        c_aum_monthly = c_lp_capital * p.get('c_aum_fee', 0.02) / 12
+
+        # Fee allocation
+        orig_fee_total = p['loan_amount'] * p['orig_fee'] * p['agg_fee_alloc']
+        exit_fee_total = p['loan_amount'] * p['exit_fee'] * p['agg_fee_alloc']
+
+        # Promote
+        b_promote = aggregator_summary.b_fund_promote if aggregator_summary else 0
+        c_promote = aggregator_summary.c_fund_promote if aggregator_summary else 0
+
+        # Co-invest monthly interest (C-piece earns the C spread on SOFR)
+        c_spread = p.get('c_target', 0.12) - p.get('current_sofr', 0.043) if p.get('c_target', 0) > p.get('current_sofr', 0) else 0.08
+        coinvest_monthly_interest = coinvest_amt * (p.get('current_sofr', 0.043) + c_spread) / 12
+
+        # Build comprehensive table
+        agg_rows = []
+        running_total = 0
+
+        for month in range(hold_months + 1):
+            row = {"Month": month}
+
+            # Co-invest flows
+            if month == 0:
+                row["Co-Invest Principal"] = -coinvest_amt
+                row["Co-Invest Interest"] = 0
+            elif month == hold_months:
+                row["Co-Invest Principal"] = coinvest_amt  # Principal returned
+                row["Co-Invest Interest"] = coinvest_monthly_interest
+            else:
+                row["Co-Invest Principal"] = 0
+                row["Co-Invest Interest"] = coinvest_monthly_interest
+
+            # Fee allocation
+            if month == 1:
+                row["Origination Fee"] = orig_fee_total
+            else:
+                row["Origination Fee"] = 0
+
+            if month == hold_months:
+                row["Exit Fee"] = exit_fee_total
+            else:
+                row["Exit Fee"] = 0
+
+            # AUM fees
+            if month > 0 and month <= hold_months:
+                row["B-Fund AUM"] = b_aum_monthly
+                row["C-Fund AUM"] = c_aum_monthly
+            else:
+                row["B-Fund AUM"] = 0
+                row["C-Fund AUM"] = 0
+
+            # Promote at exit
+            if month == hold_months:
+                row["B-Fund Promote"] = b_promote
+                row["C-Fund Promote"] = c_promote
+            else:
+                row["B-Fund Promote"] = 0
+                row["C-Fund Promote"] = 0
+
+            # Total for month
+            row["Monthly Total"] = (
+                row["Co-Invest Principal"] + row["Co-Invest Interest"] +
+                row["Origination Fee"] + row["Exit Fee"] +
+                row["B-Fund AUM"] + row["C-Fund AUM"] +
+                row["B-Fund Promote"] + row["C-Fund Promote"]
+            )
+
+            running_total += row["Monthly Total"]
+            row["Cumulative"] = running_total
+
+            agg_rows.append(row)
+
+        agg_df = pd.DataFrame(agg_rows)
+
+        # Format and display in collapsible expander
+        styled_agg = agg_df.copy()
+        for col in styled_agg.columns:
+            if col != "Month":
+                styled_agg[col] = styled_agg[col].apply(lambda x: f"${x:,.0f}" if x >= 0 else f"(${abs(x):,.0f})")
+
+        st.dataframe(styled_agg, use_container_width=True, hide_index=True, height=400)
+
+        # Download button for aggregator cashflows
+        csv_agg = agg_df.to_csv(index=False)
+        st.download_button(
+            label="Download Aggregator Cashflows (CSV)",
+            data=csv_agg,
+            file_name="aggregator_monthly_cashflows.csv",
+            mime="text/csv",
+        )
+
+        st.markdown("##### Aggregator Income Totals")
+        inc1, inc2, inc3, inc4, inc5, inc6 = st.columns(6)
+
+        total_b_aum = b_aum_monthly * hold_months
+        total_c_aum = c_aum_monthly * hold_months
+        total_coinvest_interest = coinvest_monthly_interest * hold_months
+
+        with inc1:
+            st.metric("Fee Allocation", f"${orig_fee_total + exit_fee_total:,.0f}",
+                      help=f"Orig: ${orig_fee_total:,.0f} + Exit: ${exit_fee_total:,.0f}")
+        with inc2:
+            st.metric("B-Fund AUM Fee", f"${total_b_aum:,.0f}",
+                      help=f"{hold_months}mo × ${b_aum_monthly:,.0f}")
+        with inc3:
+            st.metric("C-Fund AUM Fee", f"${total_c_aum:,.0f}",
+                      help=f"{hold_months}mo × ${c_aum_monthly:,.0f}")
+        with inc4:
+            st.metric("Total Promote", f"${b_promote + c_promote:,.0f}",
+                      help=f"B: ${b_promote:,.0f} + C: ${c_promote:,.0f}")
+        with inc5:
+            st.metric("Co-Invest Interest", f"${total_coinvest_interest:,.0f}",
+                      help=f"Interest on ${coinvest_amt:,.0f} co-invest")
+        with inc6:
+            grand_total = orig_fee_total + exit_fee_total + total_b_aum + total_c_aum + b_promote + c_promote + total_coinvest_interest
+            st.metric("Grand Total", f"${grand_total:,.0f}",
+                      help="All aggregator income (excl. principal)")
 
         st.divider()
 

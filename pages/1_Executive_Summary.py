@@ -371,11 +371,15 @@ st.markdown("""<div class="section-box section-box-a">
 a1, a2, a3, a4, a5 = st.columns([1,1,1,1,1.2])
 
 with a1:
-    a_pct = st.number_input(
-        "% of Loan", min_value=50, max_value=85,
-        value=get_default('a_pct', 70), step=5, key="a_pct_input"
-    ) / 100
-    save_input('a_pct', int(a_pct * 100))
+    # Input LTV directly, calculate % of loan
+    a_ltv_input = st.number_input(
+        "LTV (%)", min_value=40, max_value=80,
+        value=get_default('a_ltv', 60), step=5, key="a_ltv_input",
+        help="A-Piece LTV position on property"
+    )
+    save_input('a_ltv', a_ltv_input)
+    a_ltv = a_ltv_input / 100
+    a_pct = a_ltv / ltv if ltv > 0 else 0  # % of loan = LTV / Total LTV
 
 with a2:
     a_spread_bps = st.number_input(
@@ -398,8 +402,7 @@ with a4:
     st.markdown(f'<div class="metric-box"><div class="metric-label">Amount</div><div class="metric-value metric-value-cyan">${a_amt/1e6:.1f}M</div></div>', unsafe_allow_html=True)
 
 with a5:
-    a_ltv = a_pct * ltv
-    st.markdown(f'<div class="metric-box"><div class="metric-label">LTV on Property</div><div class="metric-value metric-value-cyan">{a_ltv:.1%}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="metric-box"><div class="metric-label">% of Loan</div><div class="metric-value metric-value-cyan">{a_pct:.1%}</div></div>', unsafe_allow_html=True)
 
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -413,11 +416,15 @@ st.markdown("""<div class="section-box section-box-b">
 b1, b2, b3, b4, b5 = st.columns([1,1,1,1,1.2])
 
 with b1:
-    b_pct = st.number_input(
-        "% of Loan", min_value=5, max_value=40,
-        value=get_default('b_pct', 20), step=5, key="b_pct_input"
-    ) / 100
-    save_input('b_pct', int(b_pct * 100))
+    # Input LTV directly, calculate % of loan
+    b_ltv_input = st.number_input(
+        "LTV (%)", min_value=5, max_value=30,
+        value=get_default('b_ltv', 17), step=1, key="b_ltv_input",
+        help="B-Piece LTV position on property"
+    )
+    save_input('b_ltv', b_ltv_input)
+    b_ltv = b_ltv_input / 100
+    b_pct = b_ltv / ltv if ltv > 0 else 0  # % of loan = LTV / Total LTV
 
 with b2:
     b_spread_bps = st.number_input(
@@ -439,8 +446,7 @@ with b4:
     st.markdown(f'<div class="metric-box"><div class="metric-label">Amount</div><div class="metric-value metric-value-orange">${b_amt/1e6:.1f}M</div></div>', unsafe_allow_html=True)
 
 with b5:
-    b_ltv = b_pct * ltv
-    st.markdown(f'<div class="metric-box"><div class="metric-label">LTV on Property</div><div class="metric-value metric-value-orange">{b_ltv:.1%}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="metric-box"><div class="metric-label">% of Loan</div><div class="metric-value metric-value-orange">{b_pct:.1%}</div></div>', unsafe_allow_html=True)
 
 # B-Piece Fund Economics
 st.markdown("<div style='margin-top:0.8rem; padding-top:0.8rem; border-top:1px solid rgba(255,161,90,0.2);'><span style='color:#ffa15a; font-size:0.85rem;'>Fund Economics</span></div>", unsafe_allow_html=True)
@@ -476,37 +482,40 @@ st.markdown("</div>", unsafe_allow_html=True)
 # =============================================================================
 # SECTION 4: C-PIECE FUND
 # =============================================================================
-# Validate A + B doesn't exceed 100%
-if a_pct + b_pct > 1.0:
-    st.error(f"⚠️ A-Piece ({a_pct:.0%}) + B-Piece ({b_pct:.0%}) = {(a_pct + b_pct):.0%} exceeds 100%. Please adjust.")
+# Validate A + B LTV doesn't exceed total LTV
+if a_ltv + b_ltv > ltv:
+    st.error(f"⚠️ A-Piece LTV ({a_ltv:.0%}) + B-Piece LTV ({b_ltv:.0%}) = {(a_ltv + b_ltv):.0%} exceeds Total LTV ({ltv:.0%}). Please adjust.")
+    c_ltv = 0.0
     c_pct = 0.0
 else:
-    c_pct = 1 - a_pct - b_pct
+    c_ltv = ltv - a_ltv - b_ltv  # Remaining LTV goes to C-Piece
+    c_pct = c_ltv / ltv if ltv > 0 else 0  # % of loan
 
 c_amt = loan_amount * c_pct
-c_ltv = c_pct * ltv
 
 st.markdown("""<div class="section-box section-box-c">
 <div class="section-title section-title-c">🎯 C-Piece Fund (First Loss)</div>
 """, unsafe_allow_html=True)
 
-if c_pct < 0.05 and c_pct > 0:
-    st.warning(f"C-Piece is only {c_pct:.0%} - may be too thin")
-elif c_pct == 0:
-    st.warning("C-Piece is 0% - adjust A/B allocation")
+if c_ltv < 0.05 and c_ltv > 0:
+    st.warning(f"C-Piece LTV is only {c_ltv:.1%} - may be too thin for first loss cushion")
+elif c_ltv == 0:
+    st.warning("C-Piece LTV is 0% - adjust A/B LTV allocation")
 
 c1, c2, c3, c4, c5 = st.columns([1,1,1,1,1.2])
 
 with c1:
-    st.markdown(f'<div class="metric-box"><div class="metric-label">% of Loan</div><div class="metric-value metric-value-red">{c_pct:.0%}</div></div>', unsafe_allow_html=True)
-    st.caption("(100% - A - B)")
+    st.markdown(f'<div class="metric-box"><div class="metric-label">LTV (Calculated)</div><div class="metric-value metric-value-red">{c_ltv:.1%}</div></div>', unsafe_allow_html=True)
+    st.caption(f"({ltv:.0%} - {a_ltv:.0%} - {b_ltv:.0%})")
 
 with c2:
-    c_target = st.number_input(
-        "Target Return (%)", min_value=8, max_value=25,
-        value=get_default('c_target', 12), step=1, key="c_target"
-    ) / 100
-    save_input('c_target', int(c_target * 100))
+    c_spread_bps = st.number_input(
+        "SOFR + (bps)", min_value=400, max_value=2000,
+        value=get_default('c_spread_bps', 800), step=50, key="c_spread"
+    )
+    save_input('c_spread_bps', c_spread_bps)
+    c_spread = c_spread_bps / 10000
+    c_target = current_sofr + c_spread  # Effective rate = SOFR + spread
 
 with c3:
     c_fee_alloc = st.number_input(
@@ -519,7 +528,45 @@ with c4:
     st.markdown(f'<div class="metric-box"><div class="metric-label">Amount</div><div class="metric-value metric-value-red">${c_amt/1e6:.1f}M</div></div>', unsafe_allow_html=True)
 
 with c5:
-    st.markdown(f'<div class="metric-box"><div class="metric-label">LTV on Property</div><div class="metric-value metric-value-red">{c_ltv:.1%}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="metric-box"><div class="metric-label">Eff. Rate</div><div class="metric-value metric-value-red">{c_target:.2%}</div></div>', unsafe_allow_html=True)
+    st.caption(f"S+{c_spread_bps}bps")
+
+# C-Piece Optimization Presets
+st.markdown("<div style='margin-top:0.8rem; padding-top:0.8rem; border-top:1px solid rgba(239,85,59,0.2);'><span style='color:#ef553b; font-size:0.85rem;'>Optimization Presets</span></div>", unsafe_allow_html=True)
+
+opt_col1, opt_col2, opt_col3, opt_col4 = st.columns(4)
+
+with opt_col1:
+    if st.button("🔥 High Yield", help="S+1400bps, standard aggregator fees", use_container_width=True, key="opt_high"):
+        save_input('c_spread_bps', 1400)
+        save_input('c_aum_fee', 2.0)
+        save_input('c_promote', 20)
+        save_input('c_hurdle', 10)
+        st.rerun()
+
+with opt_col2:
+    if st.button("⚖️ Balanced", help="S+650bps, moderate aggregator fees", use_container_width=True, key="opt_balanced"):
+        save_input('c_spread_bps', 650)
+        save_input('c_aum_fee', 1.5)
+        save_input('c_promote', 15)
+        save_input('c_hurdle', 8)
+        st.rerun()
+
+with opt_col3:
+    if st.button("💎 LP Optimized", help="S+500bps, lower aggregator take", use_container_width=True, key="opt_lp"):
+        save_input('c_spread_bps', 500)
+        save_input('c_aum_fee', 1.0)
+        save_input('c_promote', 10)
+        save_input('c_hurdle', 6)
+        st.rerun()
+
+with opt_col4:
+    if st.button("🏆 Competitive", help="S+600bps, no promote (align with LP)", use_container_width=True, key="opt_comp"):
+        save_input('c_spread_bps', 600)
+        save_input('c_aum_fee', 1.25)
+        save_input('c_promote', 0)
+        save_input('c_hurdle', 0)
+        st.rerun()
 
 # C-Piece Fund Economics
 st.markdown("<div style='margin-top:0.8rem; padding-top:0.8rem; border-top:1px solid rgba(239,85,59,0.2);'><span style='color:#ef553b; font-size:0.85rem;'>Fund Economics</span></div>", unsafe_allow_html=True)
@@ -587,17 +634,19 @@ st.markdown(f"""<div class="ltv-summary">
 # =============================================================================
 # SECTION 5: AGGREGATOR
 # =============================================================================
-st.markdown("""<div class="section-box section-box-agg">
-<div class="section-title section-title-agg">💼 Aggregator</div>
-""", unsafe_allow_html=True)
 
-# Calculate aggregator fee allocation
+# Calculate aggregator fee allocation first
 total_fee_alloc = a_fee_alloc + b_fee_alloc + c_fee_alloc
 if total_fee_alloc > 1.0:
     st.warning(f"⚠️ Fee allocation ({total_fee_alloc:.0%}) exceeds 100%. Aggregator gets 0%.")
     agg_fee_alloc = 0
 else:
     agg_fee_alloc = 1 - total_fee_alloc
+
+# Get co-invest input first (needed for deal creation)
+st.markdown("""<div class="section-box section-box-agg">
+<div class="section-title section-title-agg">💼 Aggregator</div>
+""", unsafe_allow_html=True)
 
 agg_orig_fee = loan_amount * orig_fee * agg_fee_alloc
 agg_exit_fee = loan_amount * exit_fee * agg_fee_alloc
@@ -628,6 +677,35 @@ with agg_input4:
 
 st.markdown("<div style='margin-top:0.8rem;'></div>", unsafe_allow_html=True)
 
+# Calculate deal early so we can show actual promote amounts
+try:
+    _deal = Deal(
+        property_value=property_value,
+        loan_amount=loan_amount,
+        term_months=term_months,
+        expected_hud_month=hud_month,
+        tranches=[
+            Tranche(TrancheType.A, a_pct, RateType.FLOATING, a_spread, fee_allocation_pct=a_fee_alloc),
+            Tranche(TrancheType.B, b_pct, RateType.FLOATING, b_spread, fee_allocation_pct=b_fee_alloc),
+            Tranche(TrancheType.C, c_pct, RateType.FLOATING, c_spread, fee_allocation_pct=c_fee_alloc),
+        ],
+        fees=FeeStructure(origination_fee=orig_fee, exit_fee=exit_fee, extension_fee=ext_fee),
+        borrower_spread=borrower_spread,
+        b_fund_terms=FundTerms(aum_fee_pct=b_aum_fee, promote_pct=b_promote, hurdle_rate=b_hurdle),
+        c_fund_terms=FundTerms(aum_fee_pct=c_aum_fee, promote_pct=c_promote, hurdle_rate=c_hurdle),
+        aggregator_coinvest_pct=agg_coinvest,
+    )
+    _sofr_curve = [current_sofr] * 60
+    _fund_results = generate_fund_cashflows(_deal, _sofr_curve, hud_month, has_extension=False)
+    _agg_summary = _fund_results.get('aggregator')
+    b_promote_amt = _agg_summary.b_fund_promote if _agg_summary else 0
+    c_promote_amt = _agg_summary.c_fund_promote if _agg_summary else 0
+    total_promote_amt = b_promote_amt + c_promote_amt
+except:
+    b_promote_amt = 0
+    c_promote_amt = 0
+    total_promote_amt = 0
+
 agg_col1, agg_col2, agg_col3 = st.columns(3)
 
 with agg_col1:
@@ -645,30 +723,34 @@ with agg_col1:
 </div>""", unsafe_allow_html=True)
 
 with agg_col2:
+    # Calculate AUM for hold period
+    b_aum_hold = b_annual_aum * (hud_month / 12)
+    c_aum_hold = c_annual_aum * (hud_month / 12)
+    total_aum_hold = b_aum_hold + c_aum_hold
     st.markdown(f"""<div style="background:rgba(0,0,0,0.2); border-radius:8px; padding:0.8rem;">
-<div style="color:#06ffa5; font-weight:600; font-size:0.85rem; margin-bottom:0.5rem;">AUM Fees (Annual)</div>
+<div style="color:#06ffa5; font-weight:600; font-size:0.85rem; margin-bottom:0.5rem;">AUM Fees @ {hud_month}mo</div>
 <div style="display:flex; justify-content:space-between; color:#b0bec5; font-size:0.8rem;">
-<span>B-Fund ({b_aum_fee:.1%})</span><span style="color:#ffa15a;">${b_annual_aum:,.0f}</span>
+<span>B-Fund ({b_aum_fee:.1%}/yr)</span><span style="color:#ffa15a;">${b_aum_hold:,.0f}</span>
 </div>
 <div style="display:flex; justify-content:space-between; color:#b0bec5; font-size:0.8rem;">
-<span>C-Fund ({c_aum_fee:.1%})</span><span style="color:#ef553b;">${c_annual_aum:,.0f}</span>
+<span>C-Fund ({c_aum_fee:.1%}/yr)</span><span style="color:#ef553b;">${c_aum_hold:,.0f}</span>
 </div>
 <div style="display:flex; justify-content:space-between; color:#06ffa5; font-size:0.9rem; font-weight:600; margin-top:0.5rem; padding-top:0.5rem; border-top:1px solid rgba(6,255,165,0.2);">
-<span>Total/yr</span><span>${total_annual_aum:,.0f}</span>
+<span>Total</span><span>${total_aum_hold:,.0f}</span>
 </div>
 </div>""", unsafe_allow_html=True)
 
 with agg_col3:
     st.markdown(f"""<div style="background:rgba(0,0,0,0.2); border-radius:8px; padding:0.8rem;">
-<div style="color:#06ffa5; font-weight:600; font-size:0.85rem; margin-bottom:0.5rem;">Promote (Carry)</div>
+<div style="color:#06ffa5; font-weight:600; font-size:0.85rem; margin-bottom:0.5rem;">Promote (Carry) @ {hud_month}mo</div>
 <div style="display:flex; justify-content:space-between; color:#b0bec5; font-size:0.8rem;">
-<span>B-Fund</span><span style="color:#ffa15a;">{b_promote:.0%} above {b_hurdle:.0%}</span>
+<span>B-Fund ({b_promote:.0%}>{b_hurdle:.0%})</span><span style="color:#ffa15a;">${b_promote_amt:,.0f}</span>
 </div>
 <div style="display:flex; justify-content:space-between; color:#b0bec5; font-size:0.8rem;">
-<span>C-Fund</span><span style="color:#ef553b;">{c_promote:.0%} above {c_hurdle:.0%}</span>
+<span>C-Fund ({c_promote:.0%}>{c_hurdle:.0%})</span><span style="color:#ef553b;">${c_promote_amt:,.0f}</span>
 </div>
 <div style="display:flex; justify-content:space-between; color:#06ffa5; font-size:0.9rem; font-weight:600; margin-top:0.5rem; padding-top:0.5rem; border-top:1px solid rgba(6,255,165,0.2);">
-<span>Calculated at exit</span><span>→</span>
+<span>Total</span><span>${total_promote_amt:,.0f}</span>
 </div>
 </div>""", unsafe_allow_html=True)
 
@@ -724,7 +806,7 @@ try:
         tranches=[
             Tranche(TrancheType.A, a_pct, RateType.FLOATING, a_spread, fee_allocation_pct=a_fee_alloc),
             Tranche(TrancheType.B, b_pct, RateType.FLOATING, b_spread, fee_allocation_pct=b_fee_alloc),
-            Tranche(TrancheType.C, c_pct, RateType.FIXED, c_target, fee_allocation_pct=c_fee_alloc),
+            Tranche(TrancheType.C, c_pct, RateType.FLOATING, c_spread, fee_allocation_pct=c_fee_alloc),
         ],
         fees=FeeStructure(origination_fee=orig_fee, exit_fee=exit_fee, extension_fee=ext_fee),
         borrower_spread=borrower_spread,
@@ -794,30 +876,37 @@ fig.add_trace(go.Bar(
 
 fig.update_layout(
     barmode='stack',
-    height=70,
+    height=50,
     showlegend=False,
-    margin=dict(l=0, r=0, t=10, b=10),
+    margin=dict(l=0, r=0, t=0, b=0, pad=0),
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(0,0,0,0)",
-    xaxis={"visible": False},
-    yaxis={"visible": False}
+    xaxis={"visible": False, "fixedrange": True, "range": [0, loan_amount]},
+    yaxis={"visible": False, "fixedrange": True},
+    bargap=0,
 )
 
-st.plotly_chart(fig, use_container_width=True, key="capital_stack")
+# CSS to remove Streamlit's default padding on plotly charts
+st.markdown("""<style>
+[data-testid="stPlotlyChart"] > div { padding: 0 !important; }
+[data-testid="stPlotlyChart"] iframe { width: 100% !important; }
+</style>""", unsafe_allow_html=True)
+
+st.plotly_chart(fig, use_container_width=True, key="capital_stack", config={"displayModeBar": False})
 
 # Tranche summary row
-t1, t2, t3 = st.columns(3)
+t1, t2, t3 = st.columns(3, gap="small")
 with t1:
     st.markdown(f"""<div style="background:rgba(76,201,240,0.1); border-left:3px solid #4cc9f0; padding:0.5rem 0.8rem; border-radius:0 6px 6px 0;">
-<strong style="color:#4cc9f0;">A-Piece</strong> <span style="color:#b0bec5; font-size:0.9rem;">${a_amt/1e6:.1f}M @ S+{a_spread_bps}bps | LTV: {a_ltv:.1%}</span>
+<strong style="color:#4cc9f0;">A-Piece</strong> <span style="color:#b0bec5; font-size:0.9rem;">{a_ltv:.0%} LTV | ${a_amt/1e6:.1f}M @ S+{a_spread_bps}bps</span>
 </div>""", unsafe_allow_html=True)
 with t2:
     st.markdown(f"""<div style="background:rgba(255,161,90,0.1); border-left:3px solid #ffa15a; padding:0.5rem 0.8rem; border-radius:0 6px 6px 0;">
-<strong style="color:#ffa15a;">B-Piece</strong> <span style="color:#b0bec5; font-size:0.9rem;">${b_amt/1e6:.1f}M @ S+{b_spread_bps}bps | LTV: {b_ltv:.1%}</span>
+<strong style="color:#ffa15a;">B-Piece</strong> <span style="color:#b0bec5; font-size:0.9rem;">{b_ltv:.0%} LTV | ${b_amt/1e6:.1f}M @ S+{b_spread_bps}bps</span>
 </div>""", unsafe_allow_html=True)
 with t3:
     st.markdown(f"""<div style="background:rgba(239,85,59,0.1); border-left:3px solid #ef553b; padding:0.5rem 0.8rem; border-radius:0 6px 6px 0;">
-<strong style="color:#ef553b;">C-Piece</strong> <span style="color:#b0bec5; font-size:0.9rem;">${c_amt/1e6:.1f}M @ {c_target:.0%} | LTV: {c_ltv:.1%}</span>
+<strong style="color:#ef553b;">C-Piece</strong> <span style="color:#b0bec5; font-size:0.9rem;">{c_ltv:.0%} LTV | ${c_amt/1e6:.1f}M @ S+{c_spread_bps}bps</span>
 </div>""", unsafe_allow_html=True)
 
 st.markdown("---")
