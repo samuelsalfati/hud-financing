@@ -533,19 +533,23 @@ def _calc_fund_flows(
     cumulative_lp_return = 0  # Track LP returns for promote calc
 
     for m in months:
+        # Get fee allocation for this month (LP share proportional to capital)
+        lp_share = lp_capital / tranche_amount if tranche_amount > 0 else 0
+        fee_alloc_this_month = fee_allocation_flows[m] * lp_share if m < len(fee_allocation_flows) else 0
+
         if m == 0:
-            # LP invests capital
+            # LP invests capital, receives origination fee allocation
             lp_principal_flows.append(-lp_capital)
-            lp_interest_flows.append(0)
+            lp_interest_flows.append(fee_alloc_this_month)  # Fee allocation goes to interest
             lp_fee_flows.append(0)  # No AUM fee month 0
             aum_fees_collected.append(0)
+            cumulative_lp_return += fee_alloc_this_month
         elif m == exit_month:
-            # Exit: principal back + final interest - AUM fee
+            # Exit: principal back + final interest + exit fee allocation - AUM fee
             sofr = sofr_curve[m]
             rate = tranche.get_rate(sofr)
 
             # LP gets their share of interest (proportional to capital)
-            lp_share = lp_capital / tranche_amount if tranche_amount > 0 else 0
             full_interest = tranche_amount * rate / 12
             lp_interest = full_interest * lp_share
 
@@ -553,17 +557,16 @@ def _calc_fund_flows(
             monthly_aum = fund_terms.calculate_monthly_aum_fee(lp_capital)
 
             lp_principal_flows.append(lp_capital)
-            lp_interest_flows.append(lp_interest)
+            lp_interest_flows.append(lp_interest + fee_alloc_this_month)  # Include fee allocation
             lp_fee_flows.append(-monthly_aum)  # LP pays AUM fee
             aum_fees_collected.append(monthly_aum)
 
-            cumulative_lp_return += lp_interest
+            cumulative_lp_return += lp_interest + fee_alloc_this_month
         else:
             # Monthly: interest - AUM fee
             sofr = sofr_curve[m]
             rate = tranche.get_rate(sofr)
 
-            lp_share = lp_capital / tranche_amount if tranche_amount > 0 else 0
             full_interest = tranche_amount * rate / 12
             lp_interest = full_interest * lp_share
 
@@ -571,12 +574,13 @@ def _calc_fund_flows(
             monthly_aum = fund_terms.calculate_monthly_aum_fee(lp_capital)
 
             lp_principal_flows.append(0)
-            lp_interest_flows.append(lp_interest if tranche.is_current_pay else 0)
+            lp_interest_flows.append((lp_interest if tranche.is_current_pay else 0) + fee_alloc_this_month)
             lp_fee_flows.append(-monthly_aum)
             aum_fees_collected.append(monthly_aum)
 
             if tranche.is_current_pay:
                 cumulative_lp_return += lp_interest
+            cumulative_lp_return += fee_alloc_this_month
 
     # Calculate LP total flows
     lp_total_flows = [p + i + f for p, i, f in zip(

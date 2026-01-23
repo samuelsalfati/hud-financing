@@ -502,6 +502,16 @@ if c_ltv < 0.05 and c_ltv > 0:
 elif c_ltv == 0:
     st.warning("C-Piece LTV is 0% - adjust A/B LTV allocation")
 
+# Calculate C-piece spread as residual (what's left after A and B)
+# C_spread = (borrower_spread - a_spread × a_pct - b_spread × b_pct) / c_pct
+if c_pct > 0:
+    c_spread = (borrower_spread - a_spread * a_pct - b_spread * b_pct) / c_pct
+    c_spread_bps = int(c_spread * 10000)
+else:
+    c_spread = 0
+    c_spread_bps = 0
+c_target = current_sofr + c_spread  # Effective rate = SOFR + spread
+
 c1, c2, c3, c4, c5 = st.columns([1,1,1,1,1.2])
 
 with c1:
@@ -509,13 +519,9 @@ with c1:
     st.caption(f"({ltv:.0%} - {a_ltv:.0%} - {b_ltv:.0%})")
 
 with c2:
-    c_spread_bps = st.number_input(
-        "SOFR + (bps)", min_value=400, max_value=2000,
-        value=get_default('c_spread_bps', 800), step=50, key="c_spread"
-    )
-    save_input('c_spread_bps', c_spread_bps)
-    c_spread = c_spread_bps / 10000
-    c_target = current_sofr + c_spread  # Effective rate = SOFR + spread
+    # C-spread is calculated (residual), not editable
+    st.markdown(f'<div class="metric-box"><div class="metric-label">Spread (Residual)</div><div class="metric-value metric-value-red">S+{c_spread_bps}bps</div></div>', unsafe_allow_html=True)
+    st.caption("Auto-calculated")
 
 with c3:
     c_fee_alloc = st.number_input(
@@ -529,44 +535,7 @@ with c4:
 
 with c5:
     st.markdown(f'<div class="metric-box"><div class="metric-label">Eff. Rate</div><div class="metric-value metric-value-red">{c_target:.2%}</div></div>', unsafe_allow_html=True)
-    st.caption(f"S+{c_spread_bps}bps")
-
-# C-Piece Optimization Presets
-st.markdown("<div style='margin-top:0.8rem; padding-top:0.8rem; border-top:1px solid rgba(239,85,59,0.2);'><span style='color:#ef553b; font-size:0.85rem;'>Optimization Presets</span></div>", unsafe_allow_html=True)
-
-opt_col1, opt_col2, opt_col3, opt_col4 = st.columns(4)
-
-with opt_col1:
-    if st.button("🔥 High Yield", help="S+1400bps, standard aggregator fees", use_container_width=True, key="opt_high"):
-        save_input('c_spread_bps', 1400)
-        save_input('c_aum_fee', 2.0)
-        save_input('c_promote', 20)
-        save_input('c_hurdle', 10)
-        st.rerun()
-
-with opt_col2:
-    if st.button("⚖️ Balanced", help="S+650bps, moderate aggregator fees", use_container_width=True, key="opt_balanced"):
-        save_input('c_spread_bps', 650)
-        save_input('c_aum_fee', 1.5)
-        save_input('c_promote', 15)
-        save_input('c_hurdle', 8)
-        st.rerun()
-
-with opt_col3:
-    if st.button("💎 LP Optimized", help="S+500bps, lower aggregator take", use_container_width=True, key="opt_lp"):
-        save_input('c_spread_bps', 500)
-        save_input('c_aum_fee', 1.0)
-        save_input('c_promote', 10)
-        save_input('c_hurdle', 6)
-        st.rerun()
-
-with opt_col4:
-    if st.button("🏆 Competitive", help="S+600bps, no promote (align with LP)", use_container_width=True, key="opt_comp"):
-        save_input('c_spread_bps', 600)
-        save_input('c_aum_fee', 1.25)
-        save_input('c_promote', 0)
-        save_input('c_hurdle', 0)
-        st.rerun()
+    st.caption(f"SOFR ({current_sofr:.2%}) + {c_spread_bps}bps")
 
 # C-Piece Fund Economics
 st.markdown("<div style='margin-top:0.8rem; padding-top:0.8rem; border-top:1px solid rgba(239,85,59,0.2);'><span style='color:#ef553b; font-size:0.85rem;'>Fund Economics</span></div>", unsafe_allow_html=True)
