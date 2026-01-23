@@ -17,9 +17,12 @@ import plotly.graph_objects as go
 
 # Helper functions for safe formatting
 def safe_pct(val, decimals=1):
-    """Format percentage, handling inf/nan"""
+    """Format percentage, handling inf/nan and large values"""
     if val is None or math.isinf(val) or math.isnan(val):
         return "N/A"
+    # For large percentages (100%+), use comma formatting
+    if abs(val) >= 1.0:
+        return f"{val*100:,.{decimals}f}%"
     return f"{val:.{decimals}%}"
 
 def safe_moic(val):

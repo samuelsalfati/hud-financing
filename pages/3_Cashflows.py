@@ -15,9 +15,12 @@ from components.charts import create_cashflow_chart, create_line_chart, create_a
 
 # Helper functions for safe formatting
 def safe_pct(val, decimals=1):
-    """Format percentage, handling inf/nan"""
+    """Format percentage, handling inf/nan and large values"""
     if val is None or math.isinf(val) or math.isnan(val):
         return "N/A"
+    # For large percentages (100%+), use comma formatting
+    if abs(val) >= 1.0:
+        return f"{val*100:,.{decimals}f}%"
     return f"{val:.{decimals}%}"
 
 def safe_moic(val):
@@ -554,9 +557,9 @@ if results:
         with agg1:
             st.metric("Fee Allocation", f"${aggregator_summary.aggregator_direct_fee_allocation:,.0f}")
         with agg2:
-            st.metric("B-Fund AUM", f"${aggregator_summary.b_fund_aum_fees:,.0f}")
+            st.metric("B-Fund AUM Fee", f"${aggregator_summary.b_fund_aum_fees:,.0f}")
         with agg3:
-            st.metric("C-Fund AUM", f"${aggregator_summary.c_fund_aum_fees:,.0f}")
+            st.metric("C-Fund AUM Fee", f"${aggregator_summary.c_fund_aum_fees:,.0f}")
         with agg4:
             st.metric("Total Promote", f"${aggregator_summary.total_promote:,.0f}")
         with agg5:
