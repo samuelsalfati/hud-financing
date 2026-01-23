@@ -15,8 +15,8 @@ FRED_API_URL = "https://api.stlouisfed.org/fred/series/observations"
 # Cache settings
 CACHE_DURATION_MINUTES = 15
 
-# Default SOFR for fallback (updated Jan 2025)
-DEFAULT_SOFR = 0.0363  # 3.63%
+# Default SOFR for fallback (30-day avg, updated Jan 2025)
+DEFAULT_SOFR = 0.0370  # 3.70% (30-day average)
 
 # Module-level cache
 _sofr_cache: dict = {
@@ -53,15 +53,19 @@ def get_fred_api_key() -> Optional[str]:
     return None
 
 
-def fetch_sofr_from_nyfed() -> Tuple[Optional[float], Optional[str]]:
+def fetch_sofr_from_nyfed(use_30day_avg: bool = True) -> Tuple[Optional[float], Optional[str]]:
     """
-    Fetch latest SOFR rate from NY Fed API (no API key required)
+    Fetch SOFR rate from NY Fed API (no API key required)
+
+    Args:
+        use_30day_avg: If True, calculate 30-day average; otherwise use daily rate
 
     Returns:
-        Tuple of (rate as decimal, observation date) or (None, None) on failure
+        Tuple of (rate as decimal, observation date range) or (None, None) on failure
     """
-    # NY Fed publishes SOFR data at this endpoint
-    NYFED_SOFR_URL = "https://markets.newyorkfed.org/api/rates/secured/sofr/last/1.json"
+    # Fetch last 30 days to calculate average
+    days_to_fetch = 30 if use_30day_avg else 1
+    NYFED_SOFR_URL = f"https://markets.newyorkfed.org/api/rates/secured/sofr/last/{days_to_fetch}.json"
 
     try:
         response = requests.get(NYFED_SOFR_URL, timeout=10)
@@ -71,11 +75,18 @@ def fetch_sofr_from_nyfed() -> Tuple[Optional[float], Optional[str]]:
         rates = data.get("refRates", [])
 
         if rates:
-            latest = rates[0]
-            # NY Fed returns rate as percentage (e.g., 4.33 for 4.33%)
-            rate_pct = float(latest.get("percentRate", 0))
-            rate_decimal = rate_pct / 100
-            date = latest.get("effectiveDate", "")
+            if use_30day_avg and len(rates) > 1:
+                # Calculate 30-day average
+                avg_rate = sum(r["percentRate"] for r in rates) / len(rates)
+                rate_decimal = avg_rate / 100
+                # Date range for display
+                date = f"30-day avg (as of {rates[0].get('effectiveDate', '')})"
+            else:
+                # Single day rate
+                latest = rates[0]
+                rate_pct = float(latest.get("percentRate", 0))
+                rate_decimal = rate_pct / 100
+                date = latest.get("effectiveDate", "")
             return rate_decimal, date
 
     except Exception as e:

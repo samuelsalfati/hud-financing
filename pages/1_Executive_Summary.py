@@ -301,14 +301,14 @@ with col3:
 
 with col4:
     term_months = st.selectbox(
-        "Term (months)", [24, 30, 36, 42, 48],
+        "Term (months)", [24, 30, 36, 42, 48, 54, 60],
         index=get_default('term_idx', 2), key="term_sel"
     )
-    save_input('term_idx', [24, 30, 36, 42, 48].index(term_months))
+    save_input('term_idx', [24, 30, 36, 42, 48, 54, 60].index(term_months))
 
 with col5:
     hud_month = st.number_input(
-        "Expected HUD Exit", min_value=12, max_value=48,
+        "Expected HUD Exit", min_value=12, max_value=60,
         value=get_default('hud_month', 24), key="hud_exit"
     )
     save_input('hud_month', hud_month)

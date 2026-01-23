@@ -213,9 +213,9 @@ with st.expander("Create Custom Deal", expanded=len(st.session_state.comparison_
         ltv = st.number_input(
             "LTV (%)", min_value=60.0, max_value=90.0, value=p['ltv']*100, step=5.0, format="%.0f", key="comp_ltv"
         ) / 100
-        term_months = st.selectbox("Term (months)", [24, 30, 36, 42, 48], index=2, key="comp_term")
+        term_months = st.selectbox("Term (months)", [24, 30, 36, 42, 48, 54, 60], index=2, key="comp_term")
         expected_hud = st.number_input(
-            "Expected HUD (month)", min_value=12, max_value=48, value=p['hud_month'], step=1, key="comp_hud"
+            "Expected HUD (month)", min_value=12, max_value=60, value=p['hud_month'], step=1, key="comp_hud"
         )
 
     with col2:
