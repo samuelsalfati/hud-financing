@@ -15,8 +15,8 @@ FRED_API_URL = "https://api.stlouisfed.org/fred/series/observations"
 # Cache settings
 CACHE_DURATION_MINUTES = 15
 
-# Default SOFR for fallback
-DEFAULT_SOFR = 0.043  # 4.3%
+# Default SOFR for fallback (updated Jan 2025)
+DEFAULT_SOFR = 0.0363  # 3.63%
 
 # Module-level cache
 _sofr_cache: dict = {
@@ -51,6 +51,37 @@ def get_fred_api_key() -> Optional[str]:
                     return line.split("=", 1)[1].strip().strip('"\'')
 
     return None
+
+
+def fetch_sofr_from_nyfed() -> Tuple[Optional[float], Optional[str]]:
+    """
+    Fetch latest SOFR rate from NY Fed API (no API key required)
+
+    Returns:
+        Tuple of (rate as decimal, observation date) or (None, None) on failure
+    """
+    # NY Fed publishes SOFR data at this endpoint
+    NYFED_SOFR_URL = "https://markets.newyorkfed.org/api/rates/secured/sofr/last/1.json"
+
+    try:
+        response = requests.get(NYFED_SOFR_URL, timeout=10)
+        response.raise_for_status()
+
+        data = response.json()
+        rates = data.get("refRates", [])
+
+        if rates:
+            latest = rates[0]
+            # NY Fed returns rate as percentage (e.g., 4.33 for 4.33%)
+            rate_pct = float(latest.get("percentRate", 0))
+            rate_decimal = rate_pct / 100
+            date = latest.get("effectiveDate", "")
+            return rate_decimal, date
+
+    except Exception as e:
+        print(f"NY Fed API error: {e}")
+
+    return None, None
 
 
 def fetch_sofr_from_fred(api_key: Optional[str] = None) -> Tuple[Optional[float], Optional[str]]:
@@ -120,8 +151,12 @@ def get_live_sofr(force_refresh: bool = False) -> SOFRData:
                 observation_date=_sofr_cache.get("observation_date"),
             )
 
-    # Try to fetch from FRED
-    rate, obs_date = fetch_sofr_from_fred()
+    # Try to fetch from NY Fed first (no API key required)
+    rate, obs_date = fetch_sofr_from_nyfed()
+
+    # If NY Fed fails, try FRED (requires API key)
+    if rate is None:
+        rate, obs_date = fetch_sofr_from_fred()
 
     if rate is not None:
         # Update cache
