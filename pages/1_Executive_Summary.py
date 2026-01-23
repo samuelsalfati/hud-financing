@@ -323,7 +323,12 @@ with m1:
 with m2:
     st.markdown(f'<div class="metric-box"><div class="metric-label">Borrower Equity</div><div class="metric-value metric-value-green">${equity_cushion/1e6:.1f}M ({1-ltv:.0%})</div></div>', unsafe_allow_html=True)
 with m3:
-    st.markdown(f'<div class="metric-box"><div class="metric-label">SOFR (Live)</div><div class="metric-value metric-value-cyan">{current_sofr:.2%}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'''<div class="metric-box">
+        <div class="metric-label">SOFR (30-Day Avg)
+            <span title="30-day average SOFR rate from NY Federal Reserve, updated daily" style="cursor:help; color:#4cc9f0; font-size:12px;">ⓘ</span>
+        </div>
+        <div class="metric-value metric-value-cyan">{current_sofr:.2%}</div>
+    </div>''', unsafe_allow_html=True)
 with m4:
     st.markdown(f'<div class="metric-box"><div class="metric-label">Borrower All-In Rate</div><div class="metric-value metric-value-orange">{borrower_rate:.2%}</div></div>', unsafe_allow_html=True)
 

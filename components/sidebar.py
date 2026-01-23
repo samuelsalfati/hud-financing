@@ -102,7 +102,7 @@ def render_sofr_indicator(manual_override: Optional[float] = None) -> SOFRData:
                 <div>
                     <div style="font-size: 0.7rem; color: {TEXT_SECONDARY};
                     text-transform: uppercase; letter-spacing: 0.05em;">
-                        Current SOFR
+                        SOFR 30-Day Avg <span title="30-day average SOFR from NY Federal Reserve" style="cursor:help; color:{CYAN_PRIMARY};">ⓘ</span>
                     </div>
                     <div style="font-size: 1.5rem; font-weight: 700; color: {CYAN_PRIMARY};">
                         {display['rate']}
