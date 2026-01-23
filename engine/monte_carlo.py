@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Tuple, Optional
 import numpy as np
 from scipy import stats
-from .cashflows import generate_cashflows, CashflowResult
+from .cashflows import generate_cashflows, generate_fund_cashflows, CashflowResult
 from .deal import Deal
 
 
@@ -257,14 +257,20 @@ def run_monte_carlo(
         else:
             # Normal scenario
             try:
-                results = generate_cashflows(
+                # Use fund cashflows to get meaningful coinvest IRR (not inflated by fee income)
+                fund_results = generate_fund_cashflows(
                     deal, sofr_path, exit_month,
-                    sponsor_is_principal=sponsor_is_principal
+                    has_extension=False
                 )
-                sponsor = results.get("sponsor", CashflowResult([], [], [], [], [], 0, 0, 0))
-                irr = sponsor.irr
-                moic = sponsor.moic
-                profit = sponsor.total_profit
+                agg_summary = fund_results.get("aggregator")
+                if agg_summary:
+                    irr = agg_summary.coinvest_irr  # Use coinvest IRR, not mixed fee+investment IRR
+                    moic = agg_summary.coinvest_moic
+                    profit = agg_summary.grand_total
+                else:
+                    irr = 0
+                    moic = 1
+                    profit = 0
             except Exception:
                 irr = 0
                 moic = 1
