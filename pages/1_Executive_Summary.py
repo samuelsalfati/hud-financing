@@ -525,7 +525,7 @@ with c1:
 
 with c2:
     # C-spread is calculated (residual), not editable
-    st.markdown(f'<div class="metric-box"><div class="metric-label">Spread (Residual)</div><div class="metric-value metric-value-red">S+{c_spread_bps}bps</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="metric-box"><div class="metric-label">Spread (Residual)</div><div class="metric-value metric-value-red">S+{c_spread_bps:,}bps</div></div>', unsafe_allow_html=True)
     st.caption("Auto-calculated")
 
 with c3:
@@ -540,7 +540,7 @@ with c4:
 
 with c5:
     st.markdown(f'<div class="metric-box"><div class="metric-label">Eff. Rate</div><div class="metric-value metric-value-red">{c_target:.2%}</div></div>', unsafe_allow_html=True)
-    st.caption(f"SOFR ({current_sofr:.2%}) + {c_spread_bps}bps")
+    st.caption(f"SOFR ({current_sofr:.2%}) + {c_spread_bps:,}bps")
 
 # C-Piece Fund Economics
 st.markdown("<div style='margin-top:0.8rem; padding-top:0.8rem; border-top:1px solid rgba(239,85,59,0.2);'><span style='color:#ef553b; font-size:0.85rem;'>Fund Economics</span></div>", unsafe_allow_html=True)
@@ -872,15 +872,15 @@ st.plotly_chart(fig, use_container_width=True, key="capital_stack", config={"dis
 t1, t2, t3 = st.columns(3, gap="small")
 with t1:
     st.markdown(f"""<div style="background:rgba(76,201,240,0.1); border-left:3px solid #4cc9f0; padding:0.5rem 0.8rem; border-radius:0 6px 6px 0;">
-<strong style="color:#4cc9f0;">A-Piece</strong> <span style="color:#b0bec5; font-size:0.9rem;">{a_ltv:.0%} LTV | ${a_amt/1e6:.1f}M @ S+{a_spread_bps}bps</span>
+<strong style="color:#4cc9f0;">A-Piece</strong> <span style="color:#b0bec5; font-size:0.9rem;">{a_ltv:.0%} LTV | ${a_amt/1e6:.1f}M @ S+{a_spread_bps:,}bps</span>
 </div>""", unsafe_allow_html=True)
 with t2:
     st.markdown(f"""<div style="background:rgba(255,161,90,0.1); border-left:3px solid #ffa15a; padding:0.5rem 0.8rem; border-radius:0 6px 6px 0;">
-<strong style="color:#ffa15a;">B-Piece</strong> <span style="color:#b0bec5; font-size:0.9rem;">{b_ltv:.0%} LTV | ${b_amt/1e6:.1f}M @ S+{b_spread_bps}bps</span>
+<strong style="color:#ffa15a;">B-Piece</strong> <span style="color:#b0bec5; font-size:0.9rem;">{b_ltv:.0%} LTV | ${b_amt/1e6:.1f}M @ S+{b_spread_bps:,}bps</span>
 </div>""", unsafe_allow_html=True)
 with t3:
     st.markdown(f"""<div style="background:rgba(239,85,59,0.1); border-left:3px solid #ef553b; padding:0.5rem 0.8rem; border-radius:0 6px 6px 0;">
-<strong style="color:#ef553b;">C-Piece</strong> <span style="color:#b0bec5; font-size:0.9rem;">{c_ltv:.0%} LTV | ${c_amt/1e6:.1f}M @ S+{c_spread_bps}bps</span>
+<strong style="color:#ef553b;">C-Piece</strong> <span style="color:#b0bec5; font-size:0.9rem;">{c_ltv:.0%} LTV | ${c_amt/1e6:.1f}M @ S+{c_spread_bps:,}bps</span>
 </div>""", unsafe_allow_html=True)
 
 st.markdown("---")
